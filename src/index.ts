@@ -13,6 +13,8 @@ import { saveSignal, saveTrade } from './database/db';
 import { placeOrder } from './okx/trading';
 import { sendDailyReport } from './reports/dailyReport';
 import { runLearningAnalysis } from './reports/learningReport';
+import { generateMarketSummary } from './reports/marketSummary';
+import { generateErrorAnalysis } from './reports/errorAnalysis';
 import { logger } from './utils/logger';
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
@@ -74,12 +76,15 @@ function setupSchedulers(): void {
   cron.schedule('55 23 * * *', async () => {
     await sendDailyReport();
   });
+  cron.schedule('0 9 * * *', async () => { await broadcastMessage(generateMarketSummary()); });
 
   // Learning analysis — every 20 closed trades (checked every hour)
   cron.schedule('0 * * * *', async () => {
     const closed = getLastNTrades(20);
     if (closed.length >= 20 && closed.length % 20 === 0) {
       await runLearningAnalysis();
+      const analysis = generateErrorAnalysis();
+      if (analysis) await broadcastMessage(analysis);
     }
   });
 

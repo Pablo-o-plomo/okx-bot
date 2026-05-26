@@ -47,6 +47,10 @@ export const config = {
       optionalEnv('MIN_SIGNAL_CONFIDENCE', '6')
     ),
     autoOptimize: optionalEnv('AUTO_OPTIMIZE', 'false') === 'true',
+    minAtrPercent: parseFloat(optionalEnv('MIN_ATR_PERCENT', '0.2')),
+    maxAtrPercent: parseFloat(optionalEnv('MAX_ATR_PERCENT', '3')),
+    defensiveModeDrawdown: parseFloat(optionalEnv('DEFENSIVE_MODE_DRAWDOWN', '-5')),
+
   },
 
   database: {
