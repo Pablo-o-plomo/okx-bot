@@ -19,6 +19,16 @@ function fmtDirection(direction: 'LONG' | 'SHORT'): string {
   return direction === 'LONG' ? '🟢 ЛОНГ' : '🔴 ШОРТ';
 }
 
+
+function normalizeBullets(text?: string): string[] {
+  if (!text) return [];
+  return text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line.replace(/^[-•]\s*/, ''));
+}
+
 // ─── New Signal ───────────────────────────────────────────────────────────────
 export function formatSignalMessage(signal: Signal): string {
   const signalStatus = config.trading.isLive ? '🔴 <b>LIVE SIGNAL</b>' : '🟡 <b>PAPER SIGNAL</b>';
@@ -86,7 +96,7 @@ ${icon} <b>Сделка закрыта</b>
 Результат: <b>${pnlSign}${trade.pnlPercent?.toFixed(2)}%</b> (${pnlSign}${trade.pnlUsdt?.toFixed(2)} USDT)
 
 <b>Причина выхода:</b>
-- ${trade.exitReason?.split('\n').join('\n- ')}
+${normalizeBullets(trade.exitReason).length ? `- ${normalizeBullets(trade.exitReason).join('\n- ')}` : '—'}
 
 <b>Вывод:</b>
 ${trade.exitAnalysis}
@@ -97,7 +107,7 @@ ${icon} <b>Сделка закрыта в минус</b>
 Результат: <b>${pnlSign}${trade.pnlPercent?.toFixed(2)}%</b> (${pnlSign}${trade.pnlUsdt?.toFixed(2)} USDT)
 
 <b>Причина убытка:</b>
-- ${trade.exitReason?.split('\n').join('\n- ')}
+${normalizeBullets(trade.exitReason).length ? `- ${normalizeBullets(trade.exitReason).join('\n- ')}` : '—'}
 
 <b>Что улучшить:</b>
 ${improvements && improvements.length > 0 ? `- ${improvements.join('\n- ')}` : '— Сделка выполнена по плану, стоп сработал штатно'}
