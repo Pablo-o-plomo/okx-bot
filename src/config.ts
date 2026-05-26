@@ -1,12 +1,6 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-console.log('ENV DEBUG', {
-  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN ? 'YES' : 'NO',
-  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID ? 'YES' : 'NO',
-  TELEGRAM_ADMIN_ID: process.env.TELEGRAM_ADMIN_ID ? 'YES' : 'NO',
-});
-
 function requireEnv(key: string): string {
   const val = process.env[key];
   if (!val) throw new Error(`❌ Missing required env variable: ${key}`);
