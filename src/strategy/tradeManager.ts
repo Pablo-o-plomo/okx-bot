@@ -11,16 +11,22 @@ import { getCandles } from '../okx/market';
 
 // Track which TPs have been hit per trade (in memory)
 const tpHitMap = new Map<number, Set<number>>();
+let monitorInProgress = false;
 
 /**
  * Monitor all open trades against current prices.
  * Called every minute by the scheduler.
  */
 export async function monitorOpenTrades(): Promise<void> {
-  const openTrades = getOpenTrades();
-  if (openTrades.length === 0) return;
-
-  await Promise.all(openTrades.map(trade => checkTrade(trade)));
+  if (monitorInProgress) return;
+  monitorInProgress = true;
+  try {
+    const openTrades = getOpenTrades();
+    if (openTrades.length === 0) return;
+    await Promise.all(openTrades.map(trade => checkTrade(trade)));
+  } finally {
+    monitorInProgress = false;
+  }
 }
 
 async function checkTrade(trade: Trade): Promise<void> {

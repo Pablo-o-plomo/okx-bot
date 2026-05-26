@@ -15,10 +15,50 @@ function fmtPct(value: number): string {
   return `${value.toFixed(2)}%`;
 }
 
+function fmtDirection(direction: 'LONG' | 'SHORT'): string {
+  return direction === 'LONG' ? '🟢 ЛОНГ' : '🔴 ШОРТ';
+}
+
+
+function normalizeBullets(text?: string): string[] {
+  if (!text) return [];
+  return text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line.replace(/^[-•]\s*/, ''));
+}
+
+
+function buildHumanComment(signal: Signal): string | null {
+  const rsi = Number(signal.indicatorSummary?.rsiState ?? 0);
+  const atrPct = signal.indicatorSummary?.atrPercent ?? 0;
+  const hasWeakVolume = (signal.warnings ?? []).some(w => w.toLowerCase().includes('объем'));
+
+  if (signal.direction === 'SHORT' && rsi <= 40 && atrPct >= 0.2) {
+    const phrases = [
+      '🗣 <i>Похоже на «отскок мёртвой кошки»: импульс вверх выдохся, шорт выглядит обоснованно.</i>',
+      '🗣 <i>Сценарий «dead cat bounce»: рынок дал слабый отскок и снова теряет силу.</i>',
+    ];
+    const idx = Math.abs(Math.round(signal.entryPrice * 1000)) % phrases.length;
+    return phrases[idx];
+  }
+
+  if (signal.direction === 'LONG' && rsi >= 55 && !hasWeakVolume) {
+    return '🗣 <i>Покупатель держит инициативу, но входим по плану и без погони за ценой.</i>';
+  }
+
+  if (hasWeakVolume) {
+    return '🗣 <i>Объем слабый — сигнал рабочий, но лучше снижать агрессию и соблюдать риск-менеджмент.</i>';
+  }
+
+  return null;
+}
+
 // ─── New Signal ───────────────────────────────────────────────────────────────
 export function formatSignalMessage(signal: Signal): string {
   const signalStatus = config.trading.isLive ? '🔴 <b>LIVE SIGNAL</b>' : '🟡 <b>PAPER SIGNAL</b>';
-  const dir = signal.direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+  const dir = fmtDirection(signal.direction);
   const tvSymbol = `OKX:${signal.symbol.replace('-USDT-SWAP', 'USDT.P').replace('-', '')}`;
   const tvLink = `https://www.tradingview.com/chart/?symbol=${tvSymbol}`;
   const confidence = '⭐'.repeat(Math.min(signal.confidence, 10));
@@ -41,7 +81,7 @@ ${signalStatus}
 🎯 TP1: <b>${fmtPrice(signal.symbol, signal.takeProfit1)}</b> | TP2: <b>${fmtPrice(signal.symbol, signal.takeProfit2)}</b> | TP3: <b>${fmtPrice(signal.symbol, signal.takeProfit3)}</b>
 
 📐 RR: <b>1:${signal.riskReward.toFixed(2)}</b> | Risk: <b>${fmtPct(signal.riskPercent)}</b>
-🧠 Confidence: <b>${signal.confidence}/10</b> ${confidence}
+🧠 Уверенность: <b>${signal.confidence}/10</b> ${confidence}
 
 📊 EMA: ${signal.indicatorSummary.emaAlignment}
 📈 RSI: ${signal.indicatorSummary.rsiState} | MACD: ${signal.indicatorSummary.macdState}
@@ -50,19 +90,26 @@ ${signalStatus}
 ✅ <b>Причины входа:</b>
 - ${signal.reasons.join('\n- ')}
 
-${warnings.length ? `⚠️ <b>Предупреждения:</b>\n- ${warnings.join('\n- ')}\n\n` : ''}📉 <a href="${tvLink}">Открыть график TradingView</a>
+${warnings.length ? `⚠️ <b>Предупреждения:</b>\n- ${warnings.join('\n- ')}\n\n` : ''}${buildHumanComment(signal) ? `${buildHumanComment(signal)}\n\n` : ''}📉 <a href="${tvLink}">Открыть график TradingView</a>
 `.trim();
 }
 
 export function sendTradeUpdate(trade: Trade, tpLevel: number, currentPrice: number): string {
+  const dir = fmtDirection(trade.direction);
+  const nextTargets = tpLevel === 1
+    ? `TP2: <b>${fmtPrice(trade.symbol, trade.takeProfit2)}</b>\nTP3: <b>${fmtPrice(trade.symbol, trade.takeProfit3)}</b>`
+    : tpLevel === 2
+      ? `TP3: <b>${fmtPrice(trade.symbol, trade.takeProfit3)}</b>\n💡 SL перенесен в безубыток`
+      : '🎯 <b>Финальная цель достигнута!</b>';
+
   return `
 📈 <b>TP${tpLevel} достигнут!</b>
 
-Монета: <b>${trade.symbol}</b>
-Направление: <b>${trade.direction}</b>
-Вход: <b>${trade.entryPrice}</b>
-Текущая цена: <b>${currentPrice}</b>
-${tpLevel === 1 ? `TP2: <b>${trade.takeProfit2}</b>\nTP3: <b>${trade.takeProfit3}</b>` : tpLevel === 2 ? `TP3: <b>${trade.takeProfit3}</b>\n💡 SL передвинут в безубыток` : '🎯 <b>Финальная цель достигнута!</b>'}
+🪙 Монета: <b>${trade.symbol}</b>
+📍 Направление: <b>${dir}</b>
+💵 Вход: <b>${fmtPrice(trade.symbol, trade.entryPrice)}</b>
+💹 Текущая цена: <b>${fmtPrice(trade.symbol, currentPrice)}</b>
+${nextTargets}
 
 <i>Позиция продолжает удерживаться до следующей цели.</i>
 `.trim();
@@ -75,7 +122,7 @@ ${icon} <b>Сделка закрыта</b>
 Результат: <b>${pnlSign}${trade.pnlPercent?.toFixed(2)}%</b> (${pnlSign}${trade.pnlUsdt?.toFixed(2)} USDT)
 
 <b>Причина выхода:</b>
-- ${trade.exitReason?.split('\n').join('\n- ')}
+${normalizeBullets(trade.exitReason).length ? `- ${normalizeBullets(trade.exitReason).join('\n- ')}` : '—'}
 
 <b>Вывод:</b>
 ${trade.exitAnalysis}
@@ -86,7 +133,7 @@ ${icon} <b>Сделка закрыта в минус</b>
 Результат: <b>${pnlSign}${trade.pnlPercent?.toFixed(2)}%</b> (${pnlSign}${trade.pnlUsdt?.toFixed(2)} USDT)
 
 <b>Причина убытка:</b>
-- ${trade.exitReason?.split('\n').join('\n- ')}
+${normalizeBullets(trade.exitReason).length ? `- ${normalizeBullets(trade.exitReason).join('\n- ')}` : '—'}
 
 <b>Что улучшить:</b>
 ${improvements && improvements.length > 0 ? `- ${improvements.join('\n- ')}` : '— Сделка выполнена по плану, стоп сработал штатно'}
