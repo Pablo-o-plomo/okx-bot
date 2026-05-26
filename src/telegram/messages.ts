@@ -3,6 +3,8 @@ import type { Signal, Trade, AnalysisReport } from '../database/models';
 // ─── New Signal ───────────────────────────────────────────────────────────────
 export function formatSignalMessage(signal: Signal): string {
   const dir = signal.direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+  const tvSymbol = `OKX:${signal.symbol.replace('-USDT-SWAP','USDT.P').replace('-','')}`;
+  const tvLink = `https://www.tradingview.com/chart/?symbol=${tvSymbol}`;
   const confidence = '⭐'.repeat(Math.min(signal.confidence, 10));
 
   return `
@@ -25,11 +27,15 @@ ${signal.leverage > 1 ? `Плечо: <b>x${signal.leverage}</b>` : ''}
 <b>Почему вход:</b>
 - ${signal.reasons.join('\n- ')}
 
+<b>Подтверждения TF:</b> ${signal.timeframeConfirmations.join(', ')}
+<b>Индикаторы:</b> EMA ${signal.indicatorSummary.emaAlignment} | RSI ${signal.indicatorSummary.rsiState} | MACD ${signal.indicatorSummary.macdState} | ATR ${signal.indicatorSummary.atrPercent}% | Vol x${signal.indicatorSummary.volumeRatio}
+
 <b>Условия отмены:</b>
 - ${signal.cancelConditions.join('\n- ')}
 
 ${signal.indicators ? `📊 <i>RSI: ${signal.indicators.rsi.toFixed(1)} | ATR: ${signal.indicators.atr.toFixed(4)} | Тренд: ${signal.indicators.trend}</i>` : ''}
 
+📉 <a href="${tvLink}">TradingView chart</a>
 ⚠️ <i>Бот не гарантирует прибыль. Торговля сопряжена с рисками.</i>
 `.trim();
 }
