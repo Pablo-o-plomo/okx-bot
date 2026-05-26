@@ -16,11 +16,14 @@ import {
   getRecentSignals,
   getLastNTrades,
   getTodayTrades,
+  getWinrateBySymbol,
 } from '../database/db';
 import { getAccountBalance } from '../okx/trading';
 import { pauseBot, resumeBot } from '../strategy/riskManager';
 import { generateDailyReport } from '../reports/dailyReport';
 import { generateLearningReport } from '../reports/learningReport';
+import { generateMarketSummary } from '../reports/marketSummary';
+import { generateErrorAnalysis } from '../reports/errorAnalysis';
 import type { Signal, Trade } from '../database/models';
 
 let bot: TelegramBot;
@@ -117,6 +120,19 @@ Winrate: <b>${winRate.toFixed(1)}%</b>
     `.trim());
   });
 
+
+  bot.onText(/\/winrate/, async (msg) => {
+    const rows = getWinrateBySymbol();
+    const text = rows.length ? rows.map(r => `${r.symbol} — ${r.winrate.toFixed(0)}% | ${r.trades} сделок | PnL ${r.pnlPercent >= 0 ? '+' : ''}${r.pnlPercent.toFixed(1)}%`).join('\n') : 'нет данных';
+    await send(msg.chat.id.toString(), `📊 <b>Winrate по монетам</b>
+${text}`);
+  });
+  bot.onText(/\/market/, async (msg) => { await send(msg.chat.id.toString(), generateMarketSummary()); });
+  bot.onText(/\/filters/, async (msg) => { await send(msg.chat.id.toString(), `🧰 Filters
+MIN_ATR_PERCENT=${config.trading.minAtrPercent}
+MAX_ATR_PERCENT=${config.trading.maxAtrPercent}
+MIN_SIGNAL_CONFIDENCE=${config.trading.minSignalConfidence}`); });
+
   // /pause
   bot.onText(/\/pause/, (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
@@ -192,12 +208,10 @@ DEMO_TRADING: ${config.okx.isDemo ? '🟢 включен' : '🔴 выключе
   bot.onText(/\/analyze/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
     try {
+      const ml = generateErrorAnalysis();
+      if (ml) await send(msg.chat.id.toString(), ml);
       const report = generateLearningReport(20);
-      if (report) {
-        await send(msg.chat.id.toString(), formatLearningReport(report));
-      } else {
-        await send(msg.chat.id.toString(), '📭 Недостаточно данных для анализа (нужно минимум 10 сделок).');
-      }
+      if (report) await send(msg.chat.id.toString(), formatLearningReport(report));
     } catch (err: any) {
       await send(msg.chat.id.toString(), `Ошибка: ${err.message}`);
     }
@@ -216,6 +230,9 @@ async function send(chatId: string, text: string): Promise<void> {
     await bot.sendMessage(chatId, text, { parse_mode: 'HTML', disable_web_page_preview: true });
   } catch (err: any) {
     logger.error(`Failed to send Telegram message: ${err.message}`);
+    if (chatId === config.telegram.chatId && config.telegram.adminId) {
+      await bot.sendMessage(config.telegram.adminId, `⚠️ Channel delivery failed: ${err.message}`);
+    }
   }
 }
 

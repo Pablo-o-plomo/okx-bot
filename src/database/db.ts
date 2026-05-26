@@ -153,6 +153,9 @@ function rowToSignal(row: any): Signal {
     riskReward: row.risk_reward,
     confidence: row.confidence,
     reasons: JSON.parse(row.reasons),
+    warnings: [],
+    timeframeConfirmations: [row.timeframe],
+    indicatorSummary: { emaAlignment: 'n/a', rsiState: 'n/a', macdState: 'n/a', atrPercent: 0, volumeRatio: 0 },
     cancelConditions: JSON.parse(row.cancel_conditions),
     timeframe: row.timeframe,
     status: row.status,
@@ -313,4 +316,19 @@ export function updateBotState(partial: Partial<BotState>): void {
     merged.totalBalance,
     merged.mode,
   );
+}
+
+export function getWinrateBySymbol(): Array<{ symbol: string; winrate: number; trades: number; pnlPercent: number }> {
+  const rows = db.prepare(`
+    SELECT symbol,
+      COUNT(*) as trades,
+      SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) as wins,
+      AVG(COALESCE(pnl_percent,0)) as avg_pnl
+    FROM trades
+    WHERE status != 'open'
+    GROUP BY symbol
+    HAVING COUNT(*) > 0
+    ORDER BY winrate DESC
+  `).all() as any[];
+  return rows.map(r => ({ symbol: r.symbol, trades: r.trades, winrate: (r.wins / r.trades) * 100, pnlPercent: r.avg_pnl }));
 }
