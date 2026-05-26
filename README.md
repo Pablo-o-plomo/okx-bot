@@ -146,3 +146,18 @@ src/
 ## ⚠️ Дисклеймер
 
 Бот не гарантирует прибыль. Торговля криптовалютами сопряжена с высоким риском. Используйте только те средства, потерю которых вы можете себе позволить. Это инструмент для обучения и тестирования стратегий.
+
+## New Telegram Commands
+- `/winrate` — winrate and PnL by symbol.
+- `/market` — daily rule-based market summary.
+- `/mode` — current mode + live/paper flags.
+- `/filters` — active filter thresholds.
+- `/analyze` — error/learning analysis.
+- `/pause` `/resume` — manual control.
+
+## New ENV Variables
+- `MIN_ATR_PERCENT=0.2`
+- `MAX_ATR_PERCENT=3`
+- `MIN_SIGNAL_CONFIDENCE=6`
+- `AUTO_OPTIMIZE=false`
+- `DEFENSIVE_MODE_DRAWDOWN=-5`

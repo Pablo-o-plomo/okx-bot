@@ -1,7 +1,8 @@
 import { config } from '../config';
-import { getBotState, updateBotState, getOpenTrades, getOpenTradeBySymbol } from '../database/db';
+import { getBotState, updateBotState, getOpenTrades, getOpenTradeBySymbol, getLastNTrades } from '../database/db';
 import { getAccountBalance } from '../okx/trading';
 import { logger } from '../utils/logger';
+import { broadcastMessage } from '../telegram/bot';
 import type { Signal } from '../database/models';
 
 export interface RiskCheck {
@@ -116,11 +117,21 @@ export function recordTradeResult(pnlPercent: number): void {
       updates.pausedUntil = tomorrow.toISOString();
       updates.pauseReason = `Дневной лимит убытка ${config.trading.maxDailyLoss}% превышен`;
       logger.warn(`⛔ Daily loss limit reached. Pausing until ${tomorrow.toISOString()}`);
+      broadcastMessage(`🛑 <b>Бот поставлен на паузу</b>\nПричина: ${updates.pauseReason}`).catch(()=>{});
     }
   } else {
     updates.consecutiveLosses = 0;
   }
 
+  const recent = getLastNTrades(20);
+  if (recent.length >= 20) {
+    const dd = recent.reduce((a,t)=>a+(t.pnlPercent||0),0);
+    if (dd <= config.trading.defensiveModeDrawdown) updates.mode = 'defensive';
+  }
+  if ((updates.consecutiveLosses ?? state.consecutiveLosses) >= config.trading.maxLossesInRow) {
+    updates.isPaused = true; updates.pausedUntil = new Date(Date.now()+24*60*60*1000).toISOString(); updates.pauseReason = `${config.trading.maxLossesInRow} убыточных подряд`;
+    broadcastMessage(`🛑 <b>Бот поставлен на паузу</b>\nПричина: ${updates.pauseReason}`).catch(()=>{});
+  }
   updateBotState(updates);
 }
 
