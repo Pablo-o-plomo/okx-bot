@@ -29,6 +29,32 @@ function normalizeBullets(text?: string): string[] {
     .map(line => line.replace(/^[-•]\s*/, ''));
 }
 
+
+function buildHumanComment(signal: Signal): string | null {
+  const rsi = Number(signal.indicatorSummary?.rsiState ?? 0);
+  const atrPct = signal.indicatorSummary?.atrPercent ?? 0;
+  const hasWeakVolume = (signal.warnings ?? []).some(w => w.toLowerCase().includes('объем'));
+
+  if (signal.direction === 'SHORT' && rsi <= 40 && atrPct >= 0.2) {
+    const phrases = [
+      '🗣 <i>Похоже на «отскок мёртвой кошки»: импульс вверх выдохся, шорт выглядит обоснованно.</i>',
+      '🗣 <i>Сценарий «dead cat bounce»: рынок дал слабый отскок и снова теряет силу.</i>',
+    ];
+    const idx = Math.abs(Math.round(signal.entryPrice * 1000)) % phrases.length;
+    return phrases[idx];
+  }
+
+  if (signal.direction === 'LONG' && rsi >= 55 && !hasWeakVolume) {
+    return '🗣 <i>Покупатель держит инициативу, но входим по плану и без погони за ценой.</i>';
+  }
+
+  if (hasWeakVolume) {
+    return '🗣 <i>Объем слабый — сигнал рабочий, но лучше снижать агрессию и соблюдать риск-менеджмент.</i>';
+  }
+
+  return null;
+}
+
 // ─── New Signal ───────────────────────────────────────────────────────────────
 export function formatSignalMessage(signal: Signal): string {
   const signalStatus = config.trading.isLive ? '🔴 <b>LIVE SIGNAL</b>' : '🟡 <b>PAPER SIGNAL</b>';
@@ -64,7 +90,7 @@ ${signalStatus}
 ✅ <b>Причины входа:</b>
 - ${signal.reasons.join('\n- ')}
 
-${warnings.length ? `⚠️ <b>Предупреждения:</b>\n- ${warnings.join('\n- ')}\n\n` : ''}📉 <a href="${tvLink}">Открыть график TradingView</a>
+${warnings.length ? `⚠️ <b>Предупреждения:</b>\n- ${warnings.join('\n- ')}\n\n` : ''}${buildHumanComment(signal) ? `${buildHumanComment(signal)}\n\n` : ''}📉 <a href="${tvLink}">Открыть график TradingView</a>
 `.trim();
 }
 
