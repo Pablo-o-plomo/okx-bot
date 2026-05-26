@@ -1,6 +1,12 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+console.log('ENV DEBUG', {
+  TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN ? 'YES' : 'NO',
+  TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID ? 'YES' : 'NO',
+  TELEGRAM_ADMIN_ID: process.env.TELEGRAM_ADMIN_ID ? 'YES' : 'NO',
+});
+
 function requireEnv(key: string): string {
   const val = process.env[key];
   if (!val) throw new Error(`❌ Missing required env variable: ${key}`);
@@ -28,13 +34,24 @@ export const config = {
 
   trading: {
     isLive: optionalEnv('LIVE_TRADING', 'false') === 'true',
-    symbols: optionalEnv('SYMBOLS', 'BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP').split(',').map(s => s.trim()),
-    timeframes: optionalEnv('TIMEFRAMES', '15m,1H,4H').split(',').map(s => s.trim()),
+    symbols: optionalEnv(
+      'SYMBOLS',
+      'BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP'
+    )
+      .split(',')
+      .map(s => s.trim()),
+
+    timeframes: optionalEnv('TIMEFRAMES', '15m,1H,4H')
+      .split(',')
+      .map(s => s.trim()),
+
     riskPerTrade: parseFloat(optionalEnv('RISK_PER_TRADE', '1')),
     maxDailyLoss: parseFloat(optionalEnv('MAX_DAILY_LOSS', '3')),
     maxOpenPositions: parseInt(optionalEnv('MAX_OPEN_POSITIONS', '3')),
     maxLossesInRow: parseInt(optionalEnv('MAX_LOSSES_IN_ROW', '3')),
-    minSignalConfidence: parseInt(optionalEnv('MIN_SIGNAL_CONFIDENCE', '6')),
+    minSignalConfidence: parseInt(
+      optionalEnv('MIN_SIGNAL_CONFIDENCE', '6')
+    ),
     autoOptimize: optionalEnv('AUTO_OPTIMIZE', 'false') === 'true',
   },
 
