@@ -126,7 +126,12 @@ export function recordTradeResult(pnlPercent: number): void {
   const recent = getLastNTrades(20);
   if (recent.length >= 20) {
     const dd = recent.reduce((a,t)=>a+(t.pnlPercent||0),0);
-    if (dd <= config.trading.defensiveModeDrawdown) updates.mode = 'defensive';
+    if (dd <= -Math.abs(config.trading.defensiveModeDrawdown)) {
+      updates.mode = 'defensive';
+      updates.isPaused = true;
+      updates.pauseReason = `Просадка за 20 сделок хуже -${Math.abs(config.trading.defensiveModeDrawdown)}%`;
+      broadcastMessage(`🛑 <b>Trading paused</b>\n\nReason:\n${updates.pauseReason}`).catch(()=>{});
+    }
   }
   if ((updates.consecutiveLosses ?? state.consecutiveLosses) >= config.trading.maxLossesInRow) {
     updates.isPaused = true; updates.pausedUntil = new Date(Date.now()+24*60*60*1000).toISOString(); updates.pauseReason = `${config.trading.maxLossesInRow} убыточных подряд`;

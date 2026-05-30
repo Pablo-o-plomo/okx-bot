@@ -1,24 +1,7 @@
 import { config } from '../config';
-import type { Signal, Trade, AnalysisReport } from '../database/models';
-
-function decimalsForSymbol(symbol: string): number {
-  if (symbol.startsWith('BTC-') || symbol.startsWith('ETH-')) return 2;
-  if (symbol.startsWith('SOL-') || symbol.startsWith('XRP-') || symbol.startsWith('DOGE-') || symbol.startsWith('TON-')) return 4;
-  return 4;
-}
-
-function fmtPrice(symbol: string, value: number): string {
-  return value.toFixed(decimalsForSymbol(symbol));
-}
-
-function fmtPct(value: number): string {
-  return `${value.toFixed(2)}%`;
-}
-
-function fmtDirection(direction: 'LONG' | 'SHORT'): string {
-  return direction === 'LONG' ? '🟢 ЛОНГ' : '🔴 ШОРТ';
-}
-
+import type { Signal, Trade, AnalysisReport, TradeProgress } from '../database/models';
+import { formatDirection, formatPercent, formatPrice, formatTradingViewLink, formatUnsignedPercent } from '../utils/formatPrice';
+import { getBreakevenComment, getCloseComment, getOpenComment, getStopComment, getTpComment, getWeakSignalComment } from '../utils/wittyComments';
 
 function normalizeBullets(text?: string): string[] {
   if (!text) return [];
@@ -29,39 +12,41 @@ function normalizeBullets(text?: string): string[] {
     .map(line => line.replace(/^[-•]\s*/, ''));
 }
 
-
-function buildHumanComment(signal: Signal): string | null {
-  const rsi = Number(signal.indicatorSummary?.rsiState ?? 0);
-  const atrPct = signal.indicatorSummary?.atrPercent ?? 0;
-  const hasWeakVolume = (signal.warnings ?? []).some(w => w.toLowerCase().includes('объем'));
-
-  if (signal.direction === 'SHORT' && rsi <= 40 && atrPct >= 0.2) {
-    const phrases = [
-      '🗣 <i>Похоже на «отскок мёртвой кошки»: импульс вверх выдохся, шорт выглядит обоснованно.</i>',
-      '🗣 <i>Сценарий «dead cat bounce»: рынок дал слабый отскок и снова теряет силу.</i>',
-    ];
-    const idx = Math.abs(Math.round(signal.entryPrice * 1000)) % phrases.length;
-    return phrases[idx];
-  }
-
-  if (signal.direction === 'LONG' && rsi >= 55 && !hasWeakVolume) {
-    return '🗣 <i>Покупатель держит инициативу, но входим по плану и без погони за ценой.</i>';
-  }
-
-  if (hasWeakVolume) {
-    return '🗣 <i>Объем слабый — сигнал рабочий, но лучше снижать агрессию и соблюдать риск-менеджмент.</i>';
-  }
-
-  return null;
+function bullets(items: string[]): string {
+  return items.length ? items.map(item => `• ${item}`).join('\n') : '• нет данных';
 }
 
-// ─── New Signal ───────────────────────────────────────────────────────────────
+function progressLines(progress?: TradeProgress): string {
+  const p = progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false };
+  return [
+    `TP1 ${p.tp1 ? '✅' : '⏳'}`,
+    `TP2 ${p.tp2 ? '✅' : '⏳'}`,
+    `TP3 ${p.tp3 ? '✅' : '⏳'}`,
+    ...(p.breakeven ? ['BE ✅'] : []),
+  ].join('\n');
+}
+
+function volumeLabel(ratio: number, state?: string): string {
+  if (!ratio) return 'нет данных';
+  if (state === 'high' || ratio >= 1.5) return `high (x${ratio.toFixed(1)})`;
+  if (state === 'weak' || ratio < 0.7) return `weak (x${ratio.toFixed(1)})`;
+  return `normal (x${ratio.toFixed(1)})`;
+}
+
+function signalTone(signal: Signal): string {
+  if (signal.warnings.length > 0) return '🟡 Осторожный сигнал';
+  if (signal.confidence >= 8) return '🟢 Сильный сигнал';
+  return '🟡 Нормальный сигнал';
+}
+
 export function formatSignalMessage(signal: Signal): string {
-  const signalStatus = config.trading.isLive ? '🔴 <b>LIVE SIGNAL</b>' : '🟡 <b>PAPER SIGNAL</b>';
-  const dir = fmtDirection(signal.direction);
-  const tvSymbol = `OKX:${signal.symbol.replace('-USDT-SWAP', 'USDT.P').replace('-', '')}`;
-  const tvLink = `https://www.tradingview.com/chart/?symbol=${tvSymbol}`;
-  const confidence = '⭐'.repeat(Math.min(signal.confidence, 10));
+  const signalStatus = config.trading.isLive ? '🔴 LIVE SIGNAL' : '🟡 PAPER SIGNAL';
+  const tvLink = formatTradingViewLink(signal.symbol);
+  const summary = signal.indicatorSummary;
+  const warnings = [...(signal.warnings ?? [])];
+  const humanComment = warnings.some(w => w.toLowerCase().includes('объем'))
+    ? getWeakSignalComment(signal.entryPrice)
+    : getOpenComment(signal.entryPrice);
 
   const vol = signal.indicatorSummary?.volumeRatio ?? 0;
   const volumeBlock = vol > 0 ? `x${vol.toFixed(2)}` : 'нет данных';
@@ -70,77 +55,138 @@ export function formatSignalMessage(signal: Signal): string {
   if (vol > 0 && vol < 0.7 && !warnings.includes('Слабый объем')) warnings.push('Слабый объем');
 
   return `
-${signalStatus}
-🚨 <b>Новый сигнал</b>
+<b>${signalStatus}</b>
 
-🪙 <b>${signal.symbol}</b> | ${dir}
-⏱ TF: ${signal.timeframeConfirmations.join(' / ')}
+🚨 <b>${signal.symbol}</b> | ${formatDirection(signal.direction)}
+⏱ ${signal.timeframeConfirmations.join(' / ')}
 
-💵 Entry: <b>${fmtPrice(signal.symbol, signal.entryPrice)}</b>
-🛑 SL: <b>${fmtPrice(signal.symbol, signal.stopLoss)}</b>
-🎯 TP1: <b>${fmtPrice(signal.symbol, signal.takeProfit1)}</b> | TP2: <b>${fmtPrice(signal.symbol, signal.takeProfit2)}</b> | TP3: <b>${fmtPrice(signal.symbol, signal.takeProfit3)}</b>
+💵 Entry: <b>${formatPrice(signal.symbol, signal.entryPrice)}</b>
+🛑 SL: <b>${formatPrice(signal.symbol, signal.stopLoss)}</b>
 
-📐 RR: <b>1:${signal.riskReward.toFixed(2)}</b> | Risk: <b>${fmtPct(signal.riskPercent)}</b>
-🧠 Уверенность: <b>${signal.confidence}/10</b> ${confidence}
+🎯 TP1: <b>${formatPrice(signal.symbol, signal.takeProfit1)}</b>
+🎯 TP2: <b>${formatPrice(signal.symbol, signal.takeProfit2)}</b>
+🎯 TP3: <b>${formatPrice(signal.symbol, signal.takeProfit3)}</b>
 
-📊 EMA: ${signal.indicatorSummary.emaAlignment}
-📈 RSI: ${signal.indicatorSummary.rsiState} | MACD: ${signal.indicatorSummary.macdState}
-🌊 ATR: ${signal.indicators?.atr.toFixed(4) ?? 'n/a'} | 🔊 Volume: ${volumeBlock}
+📐 RR: <b>1:${signal.riskReward.toFixed(1)}</b>
+🧠 Confidence: <b>${signal.confidence}/10</b>
 
-✅ <b>Причины входа:</b>
-- ${signal.reasons.join('\n- ')}
+📊 <b>EMA:</b>
+20 → ${formatPrice(signal.symbol, summary.ema20)}
+50 → ${formatPrice(signal.symbol, summary.ema50)}
+200 → ${formatPrice(signal.symbol, summary.ema200)}
 
-${warnings.length ? `⚠️ <b>Предупреждения:</b>\n- ${warnings.join('\n- ')}\n\n` : ''}${buildHumanComment(signal) ? `${buildHumanComment(signal)}\n\n` : ''}📉 <a href="${tvLink}">Открыть график TradingView</a>
+📈 RSI: <b>${summary.rsi.toFixed(1)}</b>
+📉 MACD: <b>${summary.macd}</b>
+🌊 ATR: <b>${formatUnsignedPercent(summary.atrPercent)}</b>
+🔊 Volume: <b>${volumeLabel(summary.volumeRatio, summary.volumeState)}</b>
+
+✅ <b>Причины:</b>
+${bullets(signal.reasons)}
+
+${warnings.length ? `⚠️ <b>Предупреждения:</b>\n${bullets(warnings)}\n\n` : ''}${signalTone(signal)}
+
+🗣 <i>${humanComment}</i>
+
+📉 <a href="${tvLink}">TradingView</a>
+
+⚠️ <i>Не является финансовой рекомендацией.</i>
+`.trim();
+}
+
+export function formatTradeOpenedMessage(trade: Trade, signal: Signal): string {
+  const status = config.trading.isLive ? '🔴 LIVE TRADE OPENED' : '🟡 PAPER TRADE OPENED';
+  return `
+<b>${status}</b>
+🆔 #${trade.id ?? signal.id ?? 'new'}
+
+🚨 <b>${trade.symbol}</b> | ${formatDirection(trade.direction)}
+
+💵 Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
+🛑 SL: <b>${formatPrice(trade.symbol, trade.stopLoss)}</b>
+
+🎯 TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>
+🎯 TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>
+🎯 TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>
+
+📌 Status: <b>OPEN</b>
+
+📊 <b>Progress:</b>
+${progressLines(trade.progress)}
+
+📐 RR: <b>1:${signal.riskReward.toFixed(1)}</b>
+🧠 Confidence: <b>${signal.confidence}/10</b>
+
+🗣 <i>${getOpenComment(trade.id ?? signal.entryPrice)}</i>
 `.trim();
 }
 
 export function sendTradeUpdate(trade: Trade, tpLevel: number, currentPrice: number): string {
-  const dir = fmtDirection(trade.direction);
-  const nextTargets = tpLevel === 1
-    ? `TP2: <b>${fmtPrice(trade.symbol, trade.takeProfit2)}</b>\nTP3: <b>${fmtPrice(trade.symbol, trade.takeProfit3)}</b>`
-    : tpLevel === 2
-      ? `TP3: <b>${fmtPrice(trade.symbol, trade.takeProfit3)}</b>\n💡 SL перенесен в безубыток`
-      : '🎯 <b>Финальная цель достигнута!</b>';
+  const pnl = calculatePnlPercent(trade, currentPrice);
+  const progress = trade.progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false };
+  const updatedProgress = {
+    ...progress,
+    tp1: progress.tp1 || tpLevel >= 1,
+    tp2: progress.tp2 || tpLevel >= 2,
+    tp3: progress.tp3 || tpLevel >= 3,
+    breakeven: true,
+    partiallyClosed: tpLevel < 3,
+  };
 
   return `
-📈 <b>TP${tpLevel} достигнут!</b>
+🎯 <b>TP${tpLevel} HIT</b>
+🆔 #${trade.id ?? 'n/a'}
 
-🪙 Монета: <b>${trade.symbol}</b>
-📍 Направление: <b>${dir}</b>
-💵 Вход: <b>${fmtPrice(trade.symbol, trade.entryPrice)}</b>
-💹 Текущая цена: <b>${fmtPrice(trade.symbol, currentPrice)}</b>
-${nextTargets}
+✅ TP${tpLevel} reached
+${tpLevel === 1 ? '🛡 SL moved to breakeven\n' : ''}📌 Status: <b>${tpLevel >= 3 ? 'CLOSING' : 'PARTIALLY CLOSED'}</b>
 
-<i>Позиция продолжает удерживаться до следующей цели.</i>
+📊 <b>Progress:</b>
+${progressLines(updatedProgress)}
+
+💰 Current PnL: <b>${formatPercent(pnl)}</b>
+
+🗣 <i>${getTpComment(tpLevel, trade.id ?? currentPrice)}</i>
 `.trim();
 }
 
-export function formatTradeClosedMessage(trade: Trade, improvements?: string[]): string { const isWin = trade.result === 'win'; const icon = isWin ? '✅' : '❌'; const pnlSign = (trade.pnlPercent ?? 0) >= 0 ? '+' : ''; if (isWin) { return `
-${icon} <b>Сделка закрыта</b>
+export function formatTradeClosedMessage(trade: Trade, improvements?: string[]): string {
+  const pnl = trade.finalPnl ?? trade.pnlPercent ?? 0;
+  const isBreakeven = trade.result === 'breakeven' || Math.abs(pnl) < 0.01;
+  const isWin = trade.result === 'win' || pnl > 0;
+  const title = isBreakeven
+    ? '⚪ TRADE CLOSED AT BREAKEVEN'
+    : isWin
+      ? '✅ TRADE CLOSED BY PLAN'
+      : '🔴 TRADE CLOSED BY STOP';
+  const finalStatus = isBreakeven ? 'CLOSED BREAKEVEN' : isWin ? 'CLOSED WIN' : 'CLOSED LOSS';
+  const comment = isBreakeven ? getBreakevenComment(trade.id) : isWin ? getCloseComment(trade.id) : getStopComment(trade.id);
 
-Монета: <b>${trade.symbol}</b>
-Результат: <b>${pnlSign}${trade.pnlPercent?.toFixed(2)}%</b> (${pnlSign}${trade.pnlUsdt?.toFixed(2)} USDT)
+  return `
+<b>${title}</b>
+🆔 #${trade.id ?? 'n/a'}
 
-<b>Причина выхода:</b>
-${normalizeBullets(trade.exitReason).length ? `- ${normalizeBullets(trade.exitReason).join('\n- ')}` : '—'}
+${!isWin && !isBreakeven ? '🛑 Stop Loss hit\n' : ''}🎯 TP1 ${trade.progress?.tp1 ? '✅' : '—'}
+🎯 TP2 ${trade.progress?.tp2 ? '✅' : '—'}
+🎯 TP3 ${trade.progress?.tp3 ? '✅' : '—'}
 
-<b>Вывод:</b>
-${trade.exitAnalysis}
-`.trim(); } return `
-${icon} <b>Сделка закрыта в минус</b>
+📌 Final status: <b>${finalStatus}</b>
+💰 Final PnL: <b>${formatPercent(pnl)}</b>
 
-Монета: <b>${trade.symbol}</b>
-Результат: <b>${pnlSign}${trade.pnlPercent?.toFixed(2)}%</b> (${pnlSign}${trade.pnlUsdt?.toFixed(2)} USDT)
+<b>${isWin ? 'Причина выхода' : 'Причина'}:</b>
+${bullets(normalizeBullets(trade.exitReason))}
 
-<b>Причина убытка:</b>
-${normalizeBullets(trade.exitReason).length ? `- ${normalizeBullets(trade.exitReason).join('\n- ')}` : '—'}
-
-<b>Что улучшить:</b>
-${improvements && improvements.length > 0 ? `- ${improvements.join('\n- ')}` : '— Сделка выполнена по плану, стоп сработал штатно'}
-
-<b>Теги ошибок:</b>
+${!isWin && improvements && improvements.length > 0 ? `<b>Что улучшить:</b>\n${bullets(improvements)}\n\n` : ''}<b>Теги ошибок:</b>
 ${trade.errorTags?.length ? trade.errorTags.map(t => `#${t}`).join(' ') : '#correct_execution'}
-`.trim(); }
+
+🗣 <i>${comment}</i>
+`.trim();
+}
+
+function calculatePnlPercent(trade: Trade, price: number): number {
+  const raw = trade.direction === 'LONG'
+    ? ((price - trade.entryPrice) / trade.entryPrice) * 100
+    : ((trade.entryPrice - price) / trade.entryPrice) * 100;
+  return raw * trade.leverage;
+}
 
 export function formatDailyReport(date: string, trades: Trade[], balance: number, startBalance: number): string { const closed = trades.filter(t => t.status !== 'open'); const wins = closed.filter(t => t.result === 'win'); const losses = closed.filter(t => t.result === 'loss'); const totalPnl = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0); const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0; return `
 📋 <b>Дневной отчет — ${date}</b>

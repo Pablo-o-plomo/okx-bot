@@ -2,10 +2,29 @@ import { getCandles } from '../okx/market';
 import { computeIndicators, findLevels, detectBreakout, volumeAnalysis } from './indicators';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { recordReject } from '../database/db';
 import type { Signal, Direction } from '../database/models';
 import { scoreSignalConfidence } from './confidenceScore';
 import { antiFomoFilter } from './filters/antiFomoFilter';
 import { volatilityFilter } from './filters/volatilityFilter';
+import { volumeFilter } from './filters/volumeFilter';
+
+function qualityConfidenceThreshold(): number {
+  const modeThreshold = config.trading.qualityMode === 'low'
+    ? 5
+    : config.trading.qualityMode === 'normal'
+      ? 6
+      : 7;
+  return process.env.MIN_SIGNAL_CONFIDENCE
+    ? Math.max(modeThreshold, config.trading.minSignalConfidence)
+    : modeThreshold;
+}
+
+function reject(symbol: string, timeframe: string, reason: string, details?: string): null {
+  logger.info(`⛔ Signal rejected ${symbol}: ${reason}${details ? ` (${details})` : ''}`);
+  try { recordReject(symbol, timeframe, reason, details); } catch { /* database may not be initialized in isolated tests */ }
+  return null;
+}
 
 export async function analyzeSymbol(symbol: string): Promise<Signal | null> {
   try {
@@ -19,7 +38,7 @@ export async function analyzeSymbol(symbol: string): Promise<Signal | null> {
     const primary = computeIndicators(pC, primaryTf);
     const confirm = computeIndicators(cC, confirmTf);
     const trend = computeIndicators(tC, trendTf || confirmTf);
-    if (!primary || !confirm || !trend) return null;
+    if (!primary || !confirm || !trend) return reject(symbol, primaryTf, 'not_enough_data');
 
     const levels = findLevels(pC, 80);
     const vol = volumeAnalysis(pC, 20);
@@ -46,45 +65,53 @@ export async function analyzeSymbol(symbol: string): Promise<Signal | null> {
         riskReward: rr,
       });
 
-      if (confidencePack.score < config.trading.minSignalConfidence) continue;
-      if (rr < 2) continue;
-      if (volumeMultiplier < 0.5) {
-        logger.info(`Volume reject ${symbol}: multiplier=${volumeMultiplier.toFixed(2)}`);
+      const minConfidence = qualityConfidenceThreshold();
+      if (confidencePack.score < minConfidence) {
+        recordReject(symbol, primaryTf, 'low_confidence', `${confidencePack.score}/${minConfidence}`);
         continue;
       }
+      if (rr < 2) {
+        recordReject(symbol, primaryTf, 'bad_risk_reward', rr.toFixed(2));
+        continue;
+      }
+
+      const volume = volumeFilter(volumeMultiplier);
+      if (!volume.pass) {
+        recordReject(symbol, primaryTf, volume.rejectReason || 'weak_volume', `x${volume.multiplier.toFixed(2)}`);
+        continue;
+      }
+
       if ((direction === 'SHORT' && primary.rsi < 25) || (direction === 'LONG' && primary.rsi > 75)) {
-        logger.info(`RSI hard reject ${symbol} ${direction}: rsi=${primary.rsi.toFixed(2)}`);
+        recordReject(symbol, primaryTf, 'extreme_rsi', primary.rsi.toFixed(2));
         continue;
       }
 
       const volCheck = volatilityFilter(atrPercent);
       if (!volCheck.pass) {
-        logger.info(`Volatility reject ${symbol}: ${volCheck.reason}`);
+        recordReject(symbol, primaryTf, 'volatility_filter', volCheck.reason);
         continue;
       }
 
       const last = pC[pC.length - 1];
-      const bodyPct = Math.abs(last.close - last.open) / last.open * 100;
+      const bodyAtr = primary.atr > 0 ? Math.abs(last.close - last.open) / primary.atr : 0;
       const moveAfter = breakout.isBreakout ? Math.abs(last.close - breakout.level) / breakout.level * 100 : 0;
       const fomo = antiFomoFilter({
         direction,
         price: primary.price,
         ema20: primary.ema20,
         atrPercent,
-        candleBodyPercent: bodyPct,
+        candleBodyPercent: bodyAtr,
         movedAfterBreakoutPercent: moveAfter,
         riskReward: rr,
       });
       if (!fomo.pass) {
-        logger.info(`Anti-FOMO reject ${symbol}: ${fomo.reason}`);
+        recordReject(symbol, primaryTf, 'fomo_entry', fomo.reason);
         continue;
       }
 
-      const warnings: string[] = [];
-      if (volumeMultiplier === 0) warnings.push('Volume: нет данных');
-      else if (volumeMultiplier < 0.7) warnings.push('Слабый объем');
-      if (direction === 'LONG' && primary.rsi > 70) warnings.push('RSI: перекупленность');
-      if (direction === 'SHORT' && primary.rsi < 30) warnings.push('RSI: перепроданность, риск отскока');
+      const warnings = [...volume.warnings];
+      if (direction === 'LONG' && primary.rsi > 70) warnings.push('Рынок перекуплен — возможен резкий откат');
+      if (direction === 'SHORT' && primary.rsi < 30) warnings.push('Рынок перепродан — возможен резкий отскок');
 
       return {
         symbol,
@@ -103,11 +130,18 @@ export async function analyzeSymbol(symbol: string): Promise<Signal | null> {
         warnings,
         timeframeConfirmations: [primaryTf, confirmTf, trendTf || confirmTf],
         indicatorSummary: {
+          ema20: primary.ema20,
+          ema50: primary.ema50,
+          ema200: primary.ema200,
           emaAlignment: `${primary.ema20.toFixed(2)} / ${primary.ema50.toFixed(2)} / ${primary.ema200.toFixed(2)}`,
+          rsi: primary.rsi,
           rsiState: primary.rsi.toFixed(1),
+          macd: primary.macdHistogram > 0 ? 'bullish' : primary.macdHistogram < 0 ? 'bearish' : 'neutral',
           macdState: primary.macdHistogram.toFixed(4),
+          atr: primary.atr,
           atrPercent: parseFloat(atrPercent.toFixed(2)),
           volumeRatio: parseFloat(volumeMultiplier.toFixed(2)),
+          volumeState: volume.state,
         },
         cancelConditions: [
           direction === 'LONG' ? 'Закрытие ниже EMA50' : 'Закрытие выше EMA50',

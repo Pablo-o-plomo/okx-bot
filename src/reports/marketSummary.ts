@@ -1,12 +1,27 @@
-import { getRecentSignals, getLastNTrades } from '../database/db';
+import { getRecentSignals, getLastNTrades, getRejectCountSince } from '../database/db';
+import { getMarketComment } from '../utils/wittyComments';
 
 export function generateMarketSummary(): string {
   const signals = getRecentSignals(30);
   const closed = getLastNTrades(30);
+  const rejected = getRejectCountSince(24);
   const longCount = signals.filter(s => s.direction === 'LONG').length;
   const avgConfidence = signals.length ? signals.reduce((a, s) => a + s.confidence, 0) / signals.length : 0;
-  const highVol = signals.filter(s => s.indicatorSummary?.atrPercent >= 1.5).map(s => s.symbol);
-  const rejectedApprox = Math.max(0, 30 - signals.length);
-  const mode = avgConfidence >= 8 ? 'aggressive' : avgConfidence >= 6 ? 'normal' : 'defensive';
-  return `📈 <b>Market Summary</b>\nТренд: ${longCount >= signals.length / 2 ? 'бычий' : 'медвежий'}\nСильнее выглядят: ${signals.slice(0,3).map(s=>s.symbol).join(', ') || 'n/a'}\nВысокая волатильность: ${highVol.join(', ') || 'нет'}\nОтклонено фильтрами: ~${rejectedApprox}\nРекомендация: <b>${mode}</b>`;
+  const strongest = signals.filter(s => s.confidence >= avgConfidence).slice(0, 5).map(s => s.symbol.replace('-USDT-SWAP', ''));
+  const weakest = closed.filter(t => (t.pnlPercent ?? 0) < 0).slice(0, 5).map(t => t.symbol.replace('-USDT-SWAP', ''));
+  const highVol = signals.filter(s => s.indicatorSummary?.atrPercent >= 1.5).map(s => s.symbol.replace('-USDT-SWAP', ''));
+  const mode = avgConfidence >= 8 && rejected < 20 ? 'aggressive' : avgConfidence >= 6 ? 'normal' : 'defensive';
+
+  return `
+🌍 <b>AI Market Summary</b>
+
+Тренд рынка: <b>${longCount >= signals.length / 2 ? 'бычий' : 'медвежий'}</b>
+Сильнее выглядят: ${strongest.join(', ') || 'n/a'}
+Слабее выглядят: ${weakest.join(', ') || 'n/a'}
+Волатильность: ${highVol.length ? `высокая (${highVol.join(', ')})` : 'нормальная'}
+Отклонено фильтрами за 24ч: <b>${rejected}</b>
+Рекомендация: <b>${mode}</b>
+
+🗣 <i>${getMarketComment(signals.length + rejected)}</i>
+`.trim();
 }

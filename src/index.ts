@@ -4,8 +4,8 @@ import path from 'path';
 import cron from 'node-cron';
 import express from 'express';
 import { config } from './config';
-import { initDb, getOpenTrades, getLastNTrades } from './database/db';
-import { initTelegramBot, broadcastSignal, broadcastMessage, broadcastTradeClosed, broadcastTpHit, sendErrorAlert } from './telegram/bot';
+import { initDb, getLastNTrades } from './database/db';
+import { initTelegramBot, broadcastSignal, broadcastTradeOpened, broadcastMessage, sendAdminMessage, sendErrorAlert } from './telegram/bot';
 import { analyzeSymbol } from './strategy/signalEngine';
 import { checkRisk, calculatePositionSize } from './strategy/riskManager';
 import { monitorOpenTrades } from './strategy/tradeManager';
@@ -15,7 +15,9 @@ import { sendDailyReport } from './reports/dailyReport';
 import { runLearningAnalysis } from './reports/learningReport';
 import { generateMarketSummary } from './reports/marketSummary';
 import { generateErrorAnalysis } from './reports/errorAnalysis';
+import { generateHeartbeatReport } from './reports/heartbeat';
 import { logger } from './utils/logger';
+import { recordSignalAccepted, recordSignalScanned } from './utils/runtimeMetrics';
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
 
@@ -78,6 +80,11 @@ function setupSchedulers(): void {
   });
   cron.schedule('0 9 * * *', async () => { await broadcastMessage(generateMarketSummary()); });
 
+  // Admin heartbeat — every hour
+  cron.schedule('5 * * * *', async () => {
+    await sendAdminMessage(generateHeartbeatReport()).catch(() => {});
+  });
+
   // Learning analysis — every 20 closed trades (checked every hour)
   cron.schedule('0 * * * *', async () => {
     const closed = getLastNTrades(20);
@@ -95,6 +102,7 @@ function setupSchedulers(): void {
 
 async function runSignalScan(): Promise<void> {
   for (const symbol of config.trading.symbols) {
+    recordSignalScanned();
     try {
       await processSymbol(symbol);
     } catch (err: any) {
@@ -107,6 +115,7 @@ async function runSignalScan(): Promise<void> {
 async function processSymbol(symbol: string): Promise<void> {
   const signal = await analyzeSymbol(symbol);
   if (!signal) return;
+  recordSignalAccepted();
 
   // Risk check
   const riskCheck = await checkRisk(signal);
@@ -135,7 +144,7 @@ async function processSymbol(symbol: string): Promise<void> {
     logger.info(`📋 Order placed: ${order.orderId} (${order.paper ? 'paper' : 'live'})`);
 
     // Save trade
-    saveTrade({
+    const trade = {
       signalId,
       symbol: signal.symbol,
       direction: signal.direction,
@@ -146,10 +155,13 @@ async function processSymbol(symbol: string): Promise<void> {
       takeProfit3: signal.takeProfit3,
       positionSize: signal.positionSize,
       leverage: signal.leverage,
-      status: 'open',
+      status: 'open' as const,
       entryReasons: signal.reasons,
       indicatorsAtEntry: signal.indicators,
-    });
+      progress: { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false },
+    };
+    const tradeId = saveTrade(trade);
+    await broadcastTradeOpened({ ...trade, id: tradeId }, signal);
 
     logger.info(`✅ Trade opened: ${signal.direction} ${signal.symbol} @ ${signal.entryPrice}`);
   } catch (err: any) {
