@@ -18,6 +18,7 @@ import {
   getLastNTrades,
   getTodayTrades,
   getWinrateBySymbol,
+  getTradeById,
 } from '../database/db';
 import { getAccountBalance } from '../okx/trading';
 import { pauseBot, resumeBot } from '../strategy/riskManager';
@@ -28,6 +29,7 @@ import { generateErrorAnalysis } from '../reports/errorAnalysis';
 import { generateRejectStats } from '../reports/rejectStats';
 import { generateHeartbeatReport } from '../reports/heartbeat';
 import { handleAdminCallback, sendAdminMenu, setAdminCommandHandler } from './adminMenu';
+import { formatPercent, formatPrice } from '../utils/formatPrice';
 import type { Signal, Trade } from '../database/models';
 
 let bot: TelegramBot;
@@ -69,20 +71,6 @@ function registerAdminTextCommand(command: RegExp, action: string): void {
   });
 }
 
-async function denyIfNotAdmin(chatId: string): Promise<boolean> {
-  if (isAdmin(chatId)) return false;
-  await send(chatId, '⛔ Access denied');
-  return true;
-}
-
-function registerAdminTextCommand(command: RegExp, action: string): void {
-  bot.onText(command, async (msg) => {
-    const chatId = msg.chat.id.toString();
-    if (await denyIfNotAdmin(chatId)) return;
-    await handleAdminCommand(chatId, action);
-  });
-}
-
 function registerCommands(): void {
   bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id.toString();
@@ -107,9 +95,20 @@ function registerCommands(): void {
       return;
     }
     const text = signals.map(s =>
-      `• ${s.symbol} ${s.direction} @ ${s.entryPrice} | Уверенность: ${s.confidence}/10 | ${s.status} | ${s.createdAt?.split('T')[0]}`
+      `• ${s.symbol} ${s.direction} @ ${formatPrice(s.symbol, s.entryPrice)} | SL ${formatPrice(s.symbol, s.stopLoss)} | TP1 ${formatPrice(s.symbol, s.takeProfit1)} | Уверенность: ${s.confidence}/10 | ${s.status} | ${s.createdAt?.split('T')[0]}`
     ).join('\n');
     await send(chatId, `📋 <b>Последние сигналы:</b>\n${text}`);
+  });
+
+  bot.onText(/\/trade(?:\s+(\d+))?/, async (msg, match) => {
+    const chatId = msg.chat.id.toString();
+    if (await denyIfNotAdmin(chatId)) return;
+    const tradeId = match?.[1] ? Number(match[1]) : undefined;
+    if (!tradeId) {
+      await send(chatId, 'Укажите ID сделки: /trade 123');
+      return;
+    }
+    await handleTrade(chatId, tradeId);
   });
 
   bot.onText(/\/errors/, async (msg) => {
@@ -155,40 +154,141 @@ function registerCommands(): void {
 }
 
 async function handleAdminCommand(chatId: string, command: string): Promise<void> {
-  if (command === '/stats') return send(chatId, buildStatsMessage());
-  if (command === '/positions') return send(chatId, buildPositionsMessage());
-  if (command === '/winrate') return send(chatId, buildWinrateMessage());
-  if (command === '/market') return send(chatId, generateMarketSummary());
-  if (command === '/rejects') return send(chatId, generateRejectStats());
-  if (command === '/health') return send(chatId, generateHeartbeatReport());
-  if (command === '/filters') {
-    return send(chatId, `🧰 <b>Filters</b>\nMIN_ATR_PERCENT=${config.trading.minAtrPercent}\nMAX_ATR_PERCENT=${config.trading.maxAtrPercent}\nMIN_SIGNAL_CONFIDENCE=${config.trading.minSignalConfidence}\nMIN_VOLUME_MULTIPLIER=${config.trading.minVolumeMultiplier}\nQUALITY_MODE=${config.trading.qualityMode}`);
-  }
-  if (command === '/pause') { pauseBot('Ручная остановка через admin panel'); return send(chatId, '⛔ Торговля остановлена вручную.'); }
-  if (command === '/resume') { resumeBot(); return send(chatId, '▶️ Торговля возобновлена.'); }
-  if (command === '/mode') {
-    const state = getBotState();
-    return send(chatId, `⚙️ <b>Текущий режим:</b> ${state.mode.toUpperCase()}
+  if (command === '/stats') return handleStats(chatId);
+  if (command === '/positions') return handlePositions(chatId);
+  if (command === '/winrate') return handleWinrate(chatId);
+  if (command === '/analyze') return handleAnalyze(chatId);
+  if (command === '/report') return handleReport(chatId);
+  if (command === '/rejects') return handleRejects(chatId);
+  if (command === '/market') return handleMarket(chatId);
+  if (command === '/pause') return handlePause(chatId);
+  if (command === '/resume') return handleResume(chatId);
+  if (command === '/mode') return handleMode(chatId);
+  if (command === '/risk') return handleRisk(chatId);
+  if (command === '/health') return handleHealth(chatId);
+  if (command === '/filters') return handleFilters(chatId);
+  return send(chatId, 'Раздел в разработке');
+}
+
+async function handleStats(chatId: string): Promise<void> {
+  await send(chatId, buildStatsMessage());
+}
+
+async function handlePositions(chatId: string): Promise<void> {
+  await send(chatId, buildPositionsMessage());
+}
+
+async function handleWinrate(chatId: string): Promise<void> {
+  await send(chatId, buildWinrateMessage());
+}
+
+async function handleAnalyze(chatId: string): Promise<void> {
+  const ml = generateErrorAnalysis();
+  const report = generateLearningReport(20);
+  await send(chatId, [ml, report ? formatLearningReport(report) : undefined].filter(Boolean).join('\n\n') || '📭 Недостаточно данных для анализа.');
+}
+
+async function handleReport(chatId: string): Promise<void> {
+  await send(chatId, await generateDailyReport());
+}
+
+async function handleRejects(chatId: string): Promise<void> {
+  await send(chatId, generateRejectStats());
+}
+
+async function handleMarket(chatId: string): Promise<void> {
+  await send(chatId, generateMarketSummary());
+}
+
+async function handlePause(chatId: string): Promise<void> {
+  pauseBot('Ручная остановка через admin panel');
+  await send(chatId, '⛔ Торговля остановлена вручную.');
+}
+
+async function handleResume(chatId: string): Promise<void> {
+  resumeBot();
+  await send(chatId, '▶️ Торговля возобновлена.');
+}
+
+async function handleMode(chatId: string): Promise<void> {
+  const state = getBotState();
+  await send(chatId, `⚙️ <b>Текущий режим:</b> ${state.mode.toUpperCase()}
 LIVE_TRADING: ${config.trading.isLive ? '🟢 включен' : '🔴 выключен'}
 QUALITY_MODE: ${config.trading.qualityMode}`);
-  }
-  if (command === '/risk') {
-    const state = getBotState();
-    return send(chatId, `🛡 <b>Риски</b>
+}
+
+async function handleRisk(chatId: string): Promise<void> {
+  const state = getBotState();
+  await send(chatId, `🛡 <b>Риски</b>
 Риск: ${config.trading.riskPerTrade}%
 Дневной лимит: ${config.trading.maxDailyLoss}%
 Открытых максимум: ${config.trading.maxOpenPositions}
 Убытков подряд: ${state.consecutiveLosses}`);
+}
+
+async function handleHealth(chatId: string): Promise<void> {
+  await send(chatId, generateHeartbeatReport());
+}
+
+async function handleFilters(chatId: string): Promise<void> {
+  await send(chatId, `🧰 <b>Filters</b>
+MIN_ATR_PERCENT=${config.trading.minAtrPercent}
+MAX_ATR_PERCENT=${config.trading.maxAtrPercent}
+MIN_SIGNAL_CONFIDENCE=${config.trading.minSignalConfidence}
+MIN_VOLUME_MULTIPLIER=${config.trading.minVolumeMultiplier}
+QUALITY_MODE=${config.trading.qualityMode}`);
+}
+
+
+async function handleTrade(chatId: string, tradeId: number): Promise<void> {
+  const trade = getTradeById(tradeId);
+  if (!trade) {
+    await send(chatId, `Сделка #${tradeId} не найдена.`);
+    return;
   }
-  if (command === '/report') {
-    return send(chatId, await generateDailyReport());
+  await send(chatId, buildTradeMessage(trade));
+}
+
+function resolveTradePnlPercent(trade: Trade): number {
+  if (trade.pnlPercent !== undefined && Number.isFinite(trade.pnlPercent)) return trade.pnlPercent;
+  if (trade.finalPnl !== undefined && Number.isFinite(trade.finalPnl)) return trade.finalPnl;
+  if (trade.currentPnl !== undefined && Number.isFinite(trade.currentPnl)) return trade.currentPnl;
+  if (trade.exitPrice && trade.entryPrice) {
+    const raw = trade.direction === 'LONG'
+      ? ((trade.exitPrice - trade.entryPrice) / trade.entryPrice) * 100
+      : ((trade.entryPrice - trade.exitPrice) / trade.entryPrice) * 100;
+    return raw * trade.leverage;
   }
-  if (command === '/analyze') {
-    const ml = generateErrorAnalysis();
-    const report = generateLearningReport(20);
-    return send(chatId, [ml, report ? formatLearningReport(report) : undefined].filter(Boolean).join('\n\n') || '📭 Недостаточно данных для анализа.');
+  return 0;
+}
+
+function resolveTradePnlUsdt(trade: Trade, pnlPercent: number): number {
+  if (trade.pnlUsdt !== undefined && Number.isFinite(trade.pnlUsdt)) return trade.pnlUsdt;
+  if (trade.positionSize && trade.entryPrice && trade.exitPrice) {
+    const rawMove = trade.direction === 'LONG'
+      ? trade.exitPrice - trade.entryPrice
+      : trade.entryPrice - trade.exitPrice;
+    return rawMove * trade.positionSize * trade.leverage;
   }
-  return send(chatId, `Команда ${command} пока недоступна.`);
+  if (trade.positionSize && trade.entryPrice) return (pnlPercent / 100) * trade.positionSize * trade.entryPrice;
+  return (1000 * pnlPercent) / 100;
+}
+
+function buildTradeMessage(trade: Trade): string {
+  const pnl = resolveTradePnlPercent(trade);
+  const pnlUsdt = resolveTradePnlUsdt(trade, pnl);
+  return `🧾 <b>Trade #${trade.id}</b>
+
+${trade.symbol} ${trade.direction}
+Status: <b>${trade.status}</b>
+
+Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
+SL: <b>${formatPrice(trade.symbol, trade.stopLoss)}</b>
+TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>
+TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>
+TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>
+${trade.exitPrice ? `Exit: <b>${formatPrice(trade.symbol, trade.exitPrice)}</b>\n` : ''}
+PnL: <b>${formatPercent(pnl)} | ${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT</b>`;
 }
 
 function buildStatsMessage(): string {
@@ -207,7 +307,7 @@ function buildPositionsMessage(): string {
   const trades = getOpenTrades();
   if (!trades.length) return '📭 Нет открытых позиций.';
   return `📂 <b>Открытые позиции</b>
-${trades.map(t => `• #${t.id} ${t.symbol} ${t.direction} @ ${t.entryPrice}`).join('\n')}`;
+${trades.map(t => `• #${t.id} ${t.symbol} ${t.direction} @ ${formatPrice(t.symbol, t.entryPrice)} | SL: ${formatPrice(t.symbol, t.stopLoss)} | TP1: ${formatPrice(t.symbol, t.takeProfit1)} | TP2: ${formatPrice(t.symbol, t.takeProfit2)} | TP3: ${formatPrice(t.symbol, t.takeProfit3)}`).join('\n')}`;
 }
 
 function buildWinrateMessage(): string {

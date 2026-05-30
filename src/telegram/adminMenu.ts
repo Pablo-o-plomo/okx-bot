@@ -27,28 +27,28 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
   return {
     inline_keyboard: [
       [
-        { text: '📊 Статистика', callback_data: 'admin:stats' },
-        { text: '📂 Позиции', callback_data: 'admin:positions' },
+        { text: '📊 Статистика', callback_data: 'stats' },
+        { text: '📂 Позиции', callback_data: 'positions' },
       ],
       [
-        { text: '📈 Winrate', callback_data: 'admin:winrate' },
-        { text: '🧠 Анализ', callback_data: 'admin:analyze' },
+        { text: '📈 Winrate', callback_data: 'winrate' },
+        { text: '🧠 Анализ', callback_data: 'analyze' },
       ],
       [
-        { text: '📄 Отчет', callback_data: 'admin:report' },
-        { text: '🚫 Rejects', callback_data: 'admin:rejects' },
+        { text: '📄 Отчет', callback_data: 'report' },
+        { text: '🚫 Rejects', callback_data: 'rejects' },
       ],
       [
-        { text: '🌍 Market', callback_data: 'admin:market' },
-        { text: '💓 Health', callback_data: 'admin:health' },
+        { text: '🌍 Market', callback_data: 'market' },
+        { text: '💓 Health', callback_data: 'health' },
       ],
       [
-        { text: '⏸ Пауза', callback_data: 'admin:pause' },
-        { text: '▶️ Resume', callback_data: 'admin:resume' },
+        { text: '⏸ Пауза', callback_data: 'pause' },
+        { text: '▶️ Resume', callback_data: 'resume' },
       ],
       [
-        { text: '⚙️ Режим', callback_data: 'admin:mode' },
-        { text: '🛡 Риски', callback_data: 'admin:risk' },
+        { text: '⚙️ Режим', callback_data: 'mode' },
+        { text: '🛡 Риски', callback_data: 'risk' },
       ],
     ],
   };
@@ -63,16 +63,16 @@ export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<v
 }
 
 export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.CallbackQuery): Promise<boolean> {
-  if (!query.data?.startsWith('admin:')) return false;
+  if (!query.data) return false;
 
-  const adminId = config.telegram.adminId.trim();
+  const adminIds = config.telegram.adminId.split(',').map(id => id.trim()).filter(Boolean);
   const userId = query.from.id.toString();
-  if (!adminId || userId !== adminId) {
+  if (!adminIds.includes(userId)) {
     await bot.answerCallbackQuery(query.id, { text: 'Access denied', show_alert: true });
     return true;
   }
 
-  const key = query.data.replace('admin:', '');
+  const key = query.data;
   const command = adminCallbacks[key];
   if (!command) {
     await bot.answerCallbackQuery(query.id, { text: 'Раздел в разработке', show_alert: true });
@@ -81,9 +81,9 @@ export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.C
 
   await bot.answerCallbackQuery(query.id);
   if (adminCommandHandler) {
-    await adminCommandHandler(adminId, command);
+    await adminCommandHandler(userId, command);
   } else {
-    await bot.sendMessage(adminId, 'Раздел в разработке');
+    await bot.sendMessage(userId, 'Раздел в разработке');
   }
   return true;
 }
