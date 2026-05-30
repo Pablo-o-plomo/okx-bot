@@ -1,4 +1,4 @@
-// ─── Candle ───────────────────────────────────────────────────────────────────
+// ─── Market Data ──────────────────────────────────────────────────────────────
 export interface Candle {
   timestamp: number;
   open: number;
@@ -8,9 +8,23 @@ export interface Candle {
   volume: number;
 }
 
-// ─── Signal ───────────────────────────────────────────────────────────────────
 export type Direction = 'LONG' | 'SHORT';
 export type SignalStatus = 'pending' | 'active' | 'cancelled' | 'expired';
+
+export interface SignalIndicatorSummary {
+  ema20: number;
+  ema50: number;
+  ema200: number;
+  emaAlignment: string;
+  rsi: number;
+  rsiState: string;
+  macd: 'bullish' | 'bearish' | 'neutral';
+  macdState: string;
+  atr: number;
+  atrPercent: number;
+  volumeRatio: number;
+  volumeState: 'none' | 'low' | 'weak' | 'normal' | 'high';
+}
 
 export interface Signal {
   id?: number;
@@ -27,17 +41,38 @@ export interface Signal {
   riskReward: number;
   confidence: number;
   reasons: string[];
+  warnings: string[];
+  timeframeConfirmations: string[];
+  indicatorSummary: SignalIndicatorSummary;
   cancelConditions: string[];
   timeframe: string;
   status: SignalStatus;
   createdAt?: string;
-  // Indicator snapshot
   indicators?: IndicatorSnapshot;
 }
 
-// ─── Trade ────────────────────────────────────────────────────────────────────
-export type TradeStatus = 'open' | 'closed_tp1' | 'closed_tp2' | 'closed_tp3' | 'closed_sl' | 'closed_manual';
+export type TradeLifecycleStatus =
+  | 'open'
+  | 'tp1_hit'
+  | 'tp2_hit'
+  | 'tp3_hit'
+  | 'breakeven'
+  | 'partially_closed'
+  | 'closed_win'
+  | 'closed_loss'
+  | 'closed_breakeven'
+  | 'cancelled';
+
+export type TradeStatus = TradeLifecycleStatus | 'closed_tp1' | 'closed_tp2' | 'closed_tp3' | 'closed_sl' | 'closed_manual';
 export type TradeResult = 'win' | 'loss' | 'breakeven';
+
+export interface TradeProgress {
+  tp1: boolean;
+  tp2: boolean;
+  tp3: boolean;
+  breakeven: boolean;
+  partiallyClosed: boolean;
+}
 
 export interface Trade {
   id?: number;
@@ -56,17 +91,24 @@ export interface Trade {
   result?: TradeResult;
   pnlPercent?: number;
   pnlUsdt?: number;
+  finalPnl?: number;
+  currentPnl?: number;
+  closeReason?: string;
   entryReasons: string[];
   exitReason?: string;
   exitAnalysis?: string;
   improvements?: string[];
   errorTags?: ErrorTag[];
   indicatorsAtEntry?: IndicatorSnapshot;
+  progress?: TradeProgress;
+  tp1HitAt?: string;
+  tp2HitAt?: string;
+  tp3HitAt?: string;
+  breakevenMovedAt?: string;
   openedAt?: string;
   closedAt?: string;
 }
 
-// ─── Indicator Snapshot ───────────────────────────────────────────────────────
 export interface IndicatorSnapshot {
   price: number;
   ema20: number;
@@ -84,7 +126,6 @@ export interface IndicatorSnapshot {
   timestamp: number;
 }
 
-// ─── Error Tags ───────────────────────────────────────────────────────────────
 export type ErrorTag =
   | 'late_entry'
   | 'weak_volume'
@@ -99,7 +140,6 @@ export type ErrorTag =
   | 'early_exit'
   | 'correct_execution';
 
-// ─── Analysis Report ──────────────────────────────────────────────────────────
 export interface AnalysisReport {
   id?: number;
   periodStart: string;
@@ -118,7 +158,6 @@ export interface AnalysisReport {
   createdAt?: string;
 }
 
-// ─── Bot State ────────────────────────────────────────────────────────────────
 export interface BotState {
   isPaused: boolean;
   pausedUntil?: string;
@@ -127,5 +166,5 @@ export interface BotState {
   dailyLossPercent: number;
   lastDailyReset: string;
   totalBalance: number;
-  mode: 'demo' | 'live';
+  mode: 'demo' | 'live' | 'defensive';
 }
