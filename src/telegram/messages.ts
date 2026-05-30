@@ -48,6 +48,12 @@ export function formatSignalMessage(signal: Signal): string {
     ? getWeakSignalComment(signal.entryPrice)
     : getOpenComment(signal.entryPrice);
 
+  const vol = signal.indicatorSummary?.volumeRatio ?? 0;
+  const volumeBlock = vol > 0 ? `x${vol.toFixed(2)}` : 'нет данных';
+
+  const warnings = [...(signal.warnings ?? [])];
+  if (vol > 0 && vol < 0.7 && !warnings.includes('Слабый объем')) warnings.push('Слабый объем');
+
   return `
 <b>${signalStatus}</b>
 
