@@ -182,18 +182,63 @@ function calculatePnlPercent(trade: Trade, price: number): number {
   return raw * trade.leverage;
 }
 
-export function formatDailyReport(date: string, trades: Trade[], balance: number, startBalance: number): string { const closed = trades.filter(t => t.status !== 'open'); const wins = closed.filter(t => t.result === 'win'); const losses = closed.filter(t => t.result === 'loss'); const totalPnl = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0); const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0; return `
+function resolveTradePnlPercent(trade: Trade): number {
+  if (trade.pnlPercent !== undefined && Number.isFinite(trade.pnlPercent)) return trade.pnlPercent;
+  if (trade.finalPnl !== undefined && Number.isFinite(trade.finalPnl)) return trade.finalPnl;
+  if (trade.currentPnl !== undefined && Number.isFinite(trade.currentPnl)) return trade.currentPnl;
+  if (trade.exitPrice && trade.entryPrice) return calculatePnlPercent(trade, trade.exitPrice);
+  return 0;
+}
+
+function tradePnlUsdt(trade: Trade, fallbackBalance: number): number {
+  if (trade.pnlUsdt !== undefined && Number.isFinite(trade.pnlUsdt)) return trade.pnlUsdt;
+  const pnlPercent = resolveTradePnlPercent(trade);
+  if (trade.positionSize && trade.entryPrice && trade.exitPrice) {
+    const rawMove = trade.direction === 'LONG'
+      ? trade.exitPrice - trade.entryPrice
+      : trade.entryPrice - trade.exitPrice;
+    return rawMove * trade.positionSize * trade.leverage;
+  }
+  if (trade.positionSize && trade.entryPrice) {
+    return (pnlPercent / 100) * trade.positionSize * trade.entryPrice;
+  }
+  return (fallbackBalance * pnlPercent) / 100;
+}
+
+export function formatDailyReport(
+  date: string,
+  trades: Trade[],
+  balance: number,
+  startBalance: number,
+): string {
+  const closed = trades.filter(t => t.status !== 'open');
+  const wins = closed.filter(t => t.result === 'win');
+  const losses = closed.filter(t => t.result === 'loss');
+  const fallbackBalance = startBalance || 1000;
+  const totalPnlPercent = closed.reduce((a, t) => a + resolveTradePnlPercent(t), 0);
+  const totalPnlUsdt = closed.reduce((a, t) => a + tradePnlUsdt(t, fallbackBalance), 0);
+  const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
+  const detailLines = closed.map(t => {
+    const pnlPercent = resolveTradePnlPercent(t);
+    const pnlUsdt = tradePnlUsdt(t, fallbackBalance);
+    return `• ${t.symbol} ${t.direction}: ${formatPercent(pnlPercent)} | ${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT`;
+  }).join('\n');
+
+  return `
 📋 <b>Дневной отчет — ${date}</b>
 
-💰 Баланс: <b>${balance.toFixed(2)} USDT</b> (${totalPnl >= 0 ? '+' : ''}${(balance - startBalance).toFixed(2)})
+💰 Баланс: <b>${balance.toFixed(2)} USDT</b> (${totalPnlUsdt >= 0 ? '+' : ''}${totalPnlUsdt.toFixed(2)} USDT)
 
 📊 <b>Статистика:</b>
 Сделок: ${closed.length} | ✅ ${wins.length} | ❌ ${losses.length}
 Winrate: <b>${winRate.toFixed(1)}%</b>
-P&L: <b>${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}%</b>
+P&L: <b>${formatPercent(totalPnlPercent)} | ${totalPnlUsdt >= 0 ? '+' : ''}${totalPnlUsdt.toFixed(2)} USDT</b>
 
-${closed.length > 0 ? `<b>Детали:</b>\n${closed.map(t => `• ${t.symbol} ${t.direction}: ${t.pnlPercent && t.pnlPercent >= 0 ? '+' : ''}${t.pnlPercent?.toFixed(2)}%`).join('\n')}` : 'Сделок за день нет.'}
-`.trim(); }
+${closed.length > 0 ? `<b>Детали:</b>
+${detailLines}` : 'Сделок за день нет.'}
+`.trim();
+}
+
 
 export function formatLearningReport(report: AnalysisReport): string { return `
 🧠 <b>Анализ последних ${report.totalTrades} сделок</b>

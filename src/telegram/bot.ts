@@ -18,6 +18,7 @@ import {
   getLastNTrades,
   getTodayTrades,
   getWinrateBySymbol,
+  getTradeById,
 } from '../database/db';
 import { getAccountBalance } from '../okx/trading';
 import { pauseBot, resumeBot } from '../strategy/riskManager';
@@ -28,6 +29,7 @@ import { generateErrorAnalysis } from '../reports/errorAnalysis';
 import { generateRejectStats } from '../reports/rejectStats';
 import { generateHeartbeatReport } from '../reports/heartbeat';
 import { handleAdminCallback, sendAdminMenu, setAdminCommandHandler } from './adminMenu';
+import { formatPercent, formatPrice } from '../utils/formatPrice';
 import type { Signal, Trade } from '../database/models';
 
 let bot: TelegramBot;
@@ -93,9 +95,20 @@ function registerCommands(): void {
       return;
     }
     const text = signals.map(s =>
-      `• ${s.symbol} ${s.direction} @ ${s.entryPrice} | Уверенность: ${s.confidence}/10 | ${s.status} | ${s.createdAt?.split('T')[0]}`
+      `• ${s.symbol} ${s.direction} @ ${formatPrice(s.symbol, s.entryPrice)} | SL ${formatPrice(s.symbol, s.stopLoss)} | TP1 ${formatPrice(s.symbol, s.takeProfit1)} | Уверенность: ${s.confidence}/10 | ${s.status} | ${s.createdAt?.split('T')[0]}`
     ).join('\n');
     await send(chatId, `📋 <b>Последние сигналы:</b>\n${text}`);
+  });
+
+  bot.onText(/\/trade(?:\s+(\d+))?/, async (msg, match) => {
+    const chatId = msg.chat.id.toString();
+    if (await denyIfNotAdmin(chatId)) return;
+    const tradeId = match?.[1] ? Number(match[1]) : undefined;
+    if (!tradeId) {
+      await send(chatId, 'Укажите ID сделки: /trade 123');
+      return;
+    }
+    await handleTrade(chatId, tradeId);
   });
 
   bot.onText(/\/errors/, async (msg) => {
@@ -226,6 +239,58 @@ MIN_VOLUME_MULTIPLIER=${config.trading.minVolumeMultiplier}
 QUALITY_MODE=${config.trading.qualityMode}`);
 }
 
+
+async function handleTrade(chatId: string, tradeId: number): Promise<void> {
+  const trade = getTradeById(tradeId);
+  if (!trade) {
+    await send(chatId, `Сделка #${tradeId} не найдена.`);
+    return;
+  }
+  await send(chatId, buildTradeMessage(trade));
+}
+
+function resolveTradePnlPercent(trade: Trade): number {
+  if (trade.pnlPercent !== undefined && Number.isFinite(trade.pnlPercent)) return trade.pnlPercent;
+  if (trade.finalPnl !== undefined && Number.isFinite(trade.finalPnl)) return trade.finalPnl;
+  if (trade.currentPnl !== undefined && Number.isFinite(trade.currentPnl)) return trade.currentPnl;
+  if (trade.exitPrice && trade.entryPrice) {
+    const raw = trade.direction === 'LONG'
+      ? ((trade.exitPrice - trade.entryPrice) / trade.entryPrice) * 100
+      : ((trade.entryPrice - trade.exitPrice) / trade.entryPrice) * 100;
+    return raw * trade.leverage;
+  }
+  return 0;
+}
+
+function resolveTradePnlUsdt(trade: Trade, pnlPercent: number): number {
+  if (trade.pnlUsdt !== undefined && Number.isFinite(trade.pnlUsdt)) return trade.pnlUsdt;
+  if (trade.positionSize && trade.entryPrice && trade.exitPrice) {
+    const rawMove = trade.direction === 'LONG'
+      ? trade.exitPrice - trade.entryPrice
+      : trade.entryPrice - trade.exitPrice;
+    return rawMove * trade.positionSize * trade.leverage;
+  }
+  if (trade.positionSize && trade.entryPrice) return (pnlPercent / 100) * trade.positionSize * trade.entryPrice;
+  return (1000 * pnlPercent) / 100;
+}
+
+function buildTradeMessage(trade: Trade): string {
+  const pnl = resolveTradePnlPercent(trade);
+  const pnlUsdt = resolveTradePnlUsdt(trade, pnl);
+  return `🧾 <b>Trade #${trade.id}</b>
+
+${trade.symbol} ${trade.direction}
+Status: <b>${trade.status}</b>
+
+Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
+SL: <b>${formatPrice(trade.symbol, trade.stopLoss)}</b>
+TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>
+TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>
+TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>
+${trade.exitPrice ? `Exit: <b>${formatPrice(trade.symbol, trade.exitPrice)}</b>\n` : ''}
+PnL: <b>${formatPercent(pnl)} | ${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT</b>`;
+}
+
 function buildStatsMessage(): string {
   const trades = getLastNTrades(50);
   const wins = trades.filter(t => t.result === 'win');
@@ -242,7 +307,7 @@ function buildPositionsMessage(): string {
   const trades = getOpenTrades();
   if (!trades.length) return '📭 Нет открытых позиций.';
   return `📂 <b>Открытые позиции</b>
-${trades.map(t => `• #${t.id} ${t.symbol} ${t.direction} @ ${t.entryPrice}`).join('\n')}`;
+${trades.map(t => `• #${t.id} ${t.symbol} ${t.direction} @ ${formatPrice(t.symbol, t.entryPrice)} | SL: ${formatPrice(t.symbol, t.stopLoss)} | TP1: ${formatPrice(t.symbol, t.takeProfit1)} | TP2: ${formatPrice(t.symbol, t.takeProfit2)} | TP3: ${formatPrice(t.symbol, t.takeProfit3)}`).join('\n')}`;
 }
 
 function buildWinrateMessage(): string {

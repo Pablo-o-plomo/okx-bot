@@ -66,7 +66,6 @@ export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.C
   if (!query.data) return false;
 
   const adminIds = config.telegram.adminId.split(',').map(id => id.trim()).filter(Boolean);
-  const adminId = adminIds[0] || '';
   const userId = query.from.id.toString();
   if (!adminIds.includes(userId)) {
     await bot.answerCallbackQuery(query.id, { text: 'Access denied', show_alert: true });
@@ -82,9 +81,9 @@ export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.C
 
   await bot.answerCallbackQuery(query.id);
   if (adminCommandHandler) {
-    await adminCommandHandler(adminId, command);
+    await adminCommandHandler(userId, command);
   } else {
-    await bot.sendMessage(adminId, 'Раздел в разработке');
+    await bot.sendMessage(userId, 'Раздел в разработке');
   }
   return true;
 }
