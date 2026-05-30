@@ -69,6 +69,20 @@ function registerAdminTextCommand(command: RegExp, action: string): void {
   });
 }
 
+async function denyIfNotAdmin(chatId: string): Promise<boolean> {
+  if (isAdmin(chatId)) return false;
+  await send(chatId, '⛔ Access denied');
+  return true;
+}
+
+function registerAdminTextCommand(command: RegExp, action: string): void {
+  bot.onText(command, async (msg) => {
+    const chatId = msg.chat.id.toString();
+    if (await denyIfNotAdmin(chatId)) return;
+    await handleAdminCommand(chatId, action);
+  });
+}
+
 function registerCommands(): void {
   bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id.toString();
