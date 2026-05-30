@@ -55,7 +55,7 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
 }
 
 export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<void> {
-  await bot.sendMessage(chatId, '🤖 <b>OKX Bot Control Panel</b>', {
+  await bot.sendMessage(chatId, '🤖 <b>OKX Bot Control Panel</b>\n\nВыберите действие кнопкой ниже:', {
     parse_mode: 'HTML',
     reply_markup: getAdminKeyboard(),
     disable_web_page_preview: true,
@@ -65,7 +65,7 @@ export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<v
 export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.CallbackQuery): Promise<boolean> {
   if (!query.data?.startsWith('admin:')) return false;
 
-  const adminId = config.telegram.adminId;
+  const adminId = config.telegram.adminId.trim();
   const userId = query.from.id.toString();
   if (!adminId || userId !== adminId) {
     await bot.answerCallbackQuery(query.id, { text: 'Access denied', show_alert: true });
