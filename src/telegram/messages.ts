@@ -215,26 +215,30 @@ export function formatDailyReport(
   const wins = closed.filter(t => t.result === 'win');
   const losses = closed.filter(t => t.result === 'loss');
   const fallbackBalance = startBalance || 1000;
-  const totalPnlPercent = closed.reduce((a, t) => a + resolveTradePnlPercent(t), 0);
-  const totalPnlUsdt = closed.reduce((a, t) => a + tradePnlUsdt(t, fallbackBalance), 0);
+
+  const totalPnlPercent = closed.reduce((sum, trade) => sum + resolveTradePnlPercent(trade), 0);
+  const totalPnlUsdt = closed.reduce((sum, trade) => sum + tradePnlUsdt(trade, fallbackBalance), 0);
   const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
-  const detailLines = closed.map(t => {
-    const pnlPercent = resolveTradePnlPercent(t);
-    const pnlUsdt = tradePnlUsdt(t, fallbackBalance);
-    return `• ${t.symbol} ${t.direction}: ${formatPercent(pnlPercent)} | ${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT`;
+  const signedTotalPnlUsdt = `${totalPnlUsdt >= 0 ? '+' : ''}${totalPnlUsdt.toFixed(2)} USDT`;
+
+  const detailLines = closed.map(trade => {
+    const pnlPercent = resolveTradePnlPercent(trade);
+    const pnlUsdt = tradePnlUsdt(trade, fallbackBalance);
+    const signedPnlUsdt = `${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT`;
+    return `• ${trade.symbol} ${trade.direction}: ${formatPercent(pnlPercent)} | ${signedPnlUsdt}`;
   }).join('\n');
 
-export function formatDailyReport(date: string, trades: Trade[], balance: number, startBalance: number): string { const closed = trades.filter(t => t.status !== 'open'); const wins = closed.filter(t => t.result === 'win'); const losses = closed.filter(t => t.result === 'loss'); const totalPnl = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0); const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0; return `
-📋 <b>Дневной отчет — ${date}</b>
+  return `
+📋 Дневной отчет — ${date}
 
-💰 Баланс: <b>${balance.toFixed(2)} USDT</b> (${totalPnlUsdt >= 0 ? '+' : ''}${totalPnlUsdt.toFixed(2)} USDT)
+💰 Баланс: ${balance.toFixed(2)} USDT (${signedTotalPnlUsdt})
 
-📊 <b>Статистика:</b>
+📊 Статистика:
 Сделок: ${closed.length} | ✅ ${wins.length} | ❌ ${losses.length}
-Winrate: <b>${winRate.toFixed(1)}%</b>
-P&L: <b>${formatPercent(totalPnlPercent)} | ${totalPnlUsdt >= 0 ? '+' : ''}${totalPnlUsdt.toFixed(2)} USDT</b>
+Winrate: ${winRate.toFixed(1)}%
+P&L: ${formatPercent(totalPnlPercent)} | ${signedTotalPnlUsdt}
 
-${closed.length > 0 ? `<b>Детали:</b>
+${closed.length > 0 ? `Детали:
 ${detailLines}` : 'Сделок за день нет.'}
 `.trim();
 }
