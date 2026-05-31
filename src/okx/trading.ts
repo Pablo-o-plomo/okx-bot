@@ -20,7 +20,7 @@ let paperOrderCounter = 1000;
  * Place order — routes to paper or live depending on config.
  */
 export async function placeOrder(signal: Signal): Promise<OrderResult> {
-  if (!config.trading.isLive) {
+  if (!config.trading.isLive || !config.okx.apiKey || !config.okx.apiSecret || !config.okx.passphrase) {
     return paperOrder(signal);
   }
   return liveOrder(signal);
@@ -97,7 +97,7 @@ export async function closePosition(
   size: number,
   price: number,
 ): Promise<OrderResult> {
-  if (!config.trading.isLive) {
+  if (!config.trading.isLive || !config.okx.apiKey || !config.okx.apiSecret || !config.okx.passphrase) {
     const orderId = `PAPER-CLOSE-${paperOrderCounter++}`;
     logger.info(`📄 Paper close: ${symbol} @ ${price}`);
     return { orderId, symbol, side: direction === 'LONG' ? 'sell' : 'buy', price, size, status: 'filled', paper: true };
@@ -127,7 +127,7 @@ export async function closePosition(
  * Get account balance from OKX.
  */
 export async function getAccountBalance(): Promise<number> {
-  if (!config.trading.isLive && !config.okx.apiKey) {
+  if (!config.trading.isLive || !config.okx.apiKey || !config.okx.apiSecret || !config.okx.passphrase) {
     // Return stored paper balance
     const state = getBotState();
     return state.totalBalance;
