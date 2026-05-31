@@ -1,4 +1,4 @@
-import { getOpenTrades, closeTrade, getTradeById } from '../database/db';
+import { getOpenTrades, closeTrade, getTradeById, updateTradeLifecycle } from '../database/db';
 import { getTicker } from '../okx/market';
 import { closePosition, updatePaperBalance } from '../okx/trading';
 import { recordTradeResult } from './riskManager';
@@ -11,16 +11,34 @@ import { getCandles } from '../okx/market';
 
 // Track which TPs have been hit per trade (in memory)
 const tpHitMap = new Map<number, Set<number>>();
+let monitorInProgress = false;
 
 /**
  * Monitor all open trades against current prices.
  * Called every minute by the scheduler.
  */
 export async function monitorOpenTrades(): Promise<void> {
-  const openTrades = getOpenTrades();
-  if (openTrades.length === 0) return;
+  if (monitorInProgress) return;
+  monitorInProgress = true;
+  try {
+    const openTrades = getOpenTrades();
+    if (openTrades.length === 0) return;
+    await Promise.all(openTrades.map(trade => checkTrade(trade)));
+  } finally {
+    monitorInProgress = false;
+  }
+}
 
-  await Promise.all(openTrades.map(trade => checkTrade(trade)));
+
+function calculatePnlPercent(trade: Trade, price: number): number {
+  const raw = trade.direction === 'LONG'
+    ? ((price - trade.entryPrice) / trade.entryPrice) * 100
+    : ((trade.entryPrice - price) / trade.entryPrice) * 100;
+  return raw * trade.leverage;
+}
+
+function tradeProgress(trade: Trade) {
+  return trade.progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false };
 }
 
 async function checkTrade(trade: Trade): Promise<void> {
@@ -28,7 +46,14 @@ async function checkTrade(trade: Trade): Promise<void> {
   if (!currentPrice || !trade.id) return;
 
   const id = trade.id;
-  if (!tpHitMap.has(id)) tpHitMap.set(id, new Set());
+  if (!tpHitMap.has(id)) {
+    const persisted = tradeProgress(trade);
+    tpHitMap.set(id, new Set([
+      ...(persisted.tp1 ? [1] : []),
+      ...(persisted.tp2 ? [2] : []),
+      ...(persisted.tp3 ? [3] : []),
+    ]));
+  }
   const hitTPs = tpHitMap.get(id)!;
 
   const isLong = trade.direction === 'LONG';
@@ -50,23 +75,42 @@ async function checkTrade(trade: Trade): Promise<void> {
 
   if (tp3Hit && !hitTPs.has(3)) {
     hitTPs.add(3);
-    await handleClose(trade, currentPrice, 'closed_tp3');
+    await updateTradeLifecycle(id, {
+      status: 'tp3_hit',
+      currentPnl: calculatePnlPercent(trade, currentPrice),
+      tp3HitAt: new Date().toISOString(),
+      progress: { ...tradeProgress(trade), tp1: true, tp2: true, tp3: true, breakeven: true },
+    });
+    await handleClose(trade, currentPrice, 'closed_win');
     tpHitMap.delete(id);
     return;
   }
 
   if (tp2Hit && !hitTPs.has(2)) {
     hitTPs.add(2);
-    // Notify TP2 hit but keep trade open for TP3
-    await broadcastTpHit(trade, 2, currentPrice);
-    // Move SL to entry (breakeven)
+    const progress = { ...tradeProgress(trade), tp1: true, tp2: true, breakeven: true, partiallyClosed: true };
+    updateTradeLifecycle(id, {
+      status: 'partially_closed',
+      currentPnl: calculatePnlPercent(trade, currentPrice),
+      tp2HitAt: new Date().toISOString(),
+      progress,
+    });
+    await broadcastTpHit({ ...trade, progress, status: 'partially_closed', currentPnl: calculatePnlPercent(trade, currentPrice) }, 2, currentPrice);
     logger.info(`📈 TP2 hit for ${trade.symbol} — moving SL to breakeven`);
     return;
   }
 
   if (tp1Hit && !hitTPs.has(1)) {
     hitTPs.add(1);
-    await broadcastTpHit(trade, 1, currentPrice);
+    const progress = { ...tradeProgress(trade), tp1: true, breakeven: true, partiallyClosed: true };
+    updateTradeLifecycle(id, {
+      status: 'partially_closed',
+      currentPnl: calculatePnlPercent(trade, currentPrice),
+      tp1HitAt: new Date().toISOString(),
+      breakevenMovedAt: new Date().toISOString(),
+      progress,
+    });
+    await broadcastTpHit({ ...trade, progress, status: 'partially_closed', currentPnl: calculatePnlPercent(trade, currentPrice) }, 1, currentPrice);
     logger.info(`📈 TP1 hit for ${trade.symbol}`);
   }
 }
@@ -78,8 +122,9 @@ async function handleClose(
 ): Promise<void> {
   if (!trade.id) return;
 
-  const isWin = status !== 'closed_sl';
-  const result = isWin ? 'win' : 'loss';
+  const isBreakeven = status === 'closed_breakeven';
+  const isWin = status === 'closed_win' || status === 'closed_tp1' || status === 'closed_tp2' || status === 'closed_tp3';
+  const result = isBreakeven ? 'breakeven' : isWin ? 'win' : 'loss';
   const isLong = trade.direction === 'LONG';
 
   const pnlPercent = isLong
@@ -166,9 +211,11 @@ async function generateExitAnalysis(
         }
       }
       break;
+    case 'closed_win':
     case 'closed_tp3':
       exitReasons.push('Достигнут Take Profit 3 — полная цель достигнута');
       break;
+    case 'closed_loss':
     case 'closed_sl':
       exitReasons.push('Stop Loss сработал корректно');
       if (currentIndicators) {
@@ -207,7 +254,7 @@ async function generateExitAnalysis(
       break;
   }
 
-  const isWin = status !== 'closed_sl';
+  const isWin = status !== 'closed_sl' && status !== 'closed_loss';
   const exitAnalysis = isWin
     ? `Сделка отработала по плану. PnL: +${pnlPercent.toFixed(2)}%. ${errorTags.length === 0 ? 'Ошибок нет.' : ''}`
     : `Убыток ${pnlPercent.toFixed(2)}%. Stop Loss сработал корректно. ${improvements.length > 0 ? 'Есть точки для улучшения.' : ''}`;
