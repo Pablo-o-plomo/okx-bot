@@ -1,3 +1,4 @@
+console.log("🔥 BUILD VERSION 2.0.0-buttons-fix");
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
