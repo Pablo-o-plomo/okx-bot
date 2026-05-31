@@ -8,8 +8,8 @@ export function generateErrorAnalysis(): string | null {
   for (const t of losses) {
     bySymbol[t.symbol] = (bySymbol[t.symbol] || 0) + 1;
     for (const r of t.entryReasons || []) byReason[r] = (byReason[r] || 0) + 1;
-    const tf = t.indicatorsAtEntry?.timeframe || 'n/a'; byTf[tf] = (byTf[tf] || 0) + 1;
+    const tf = t.indicatorsAtEntry?.timeframe || 'нет данных'; byTf[tf] = (byTf[tf] || 0) + 1;
   }
   const top = (m: Record<string, number>) => Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>`• ${k}: ${v}`).join('\n') || '• нет данных';
-  return `🧪 <b>ML/Error Analysis (20 сделок)</b>\nУбыточные причины:\n${top(byReason)}\nСлабые символы:\n${top(bySymbol)}\nСлабые TF:\n${top(byTf)}\nРекомендация: ужесточить фильтры для топ-2 причин.`;
+  return `🧪 <b>ML-анализ ошибок (20 сделок)</b>\nУбыточные причины:\n${top(byReason)}\nСлабые символы:\n${top(bySymbol)}\nСлабые таймфреймы:\n${top(byTf)}\nРекомендация: ужесточить фильтры для топ-2 причин.`;
 }

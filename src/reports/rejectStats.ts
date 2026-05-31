@@ -11,17 +11,17 @@ export function generateRejectStats(): string {
   const dayCount = getRejectCountSince(24);
 
   return `
-🚫 <b>Reject Analytics</b>
+🚫 <b>Аналитика отклонений</b>
 
 Отклонено за 24ч: <b>${dayCount}</b>
 
-<b>Top reject reasons:</b>
+<b>Главные причины отклонения:</b>
 ${lines(reasons, r => `• ${r.reason}: ${r.count}`)}
 
-<b>Weakest symbols:</b>
+<b>Самые слабые монеты:</b>
 ${lines(symbols, s => `• ${s.symbol}: ${s.count}`)}
 
-<b>Weakest timeframes:</b>
+<b>Самые слабые таймфреймы:</b>
 ${lines(timeframes, t => `• ${t.timeframe}: ${t.count}`)}
 `.trim();
 }

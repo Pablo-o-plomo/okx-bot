@@ -29,7 +29,7 @@ import { generateErrorAnalysis } from '../reports/errorAnalysis';
 import { generateRejectStats } from '../reports/rejectStats';
 import { generateHeartbeatReport } from '../reports/heartbeat';
 import { getAdminKeyboard, handleAdminCallback, setAdminCommandHandler } from './adminMenu';
-import { formatPercent, formatPrice } from '../utils/formatPrice';
+import { formatDirection, formatPercent, formatPrice } from '../utils/formatPrice';
 import { BUILD_VERSION } from '../version';
 import type { Signal, Trade } from '../database/models';
 
@@ -180,12 +180,41 @@ function registerCommands(): void {
   });
 }
 
+
+function qualityModeLabel(mode: string): string {
+  if (mode === 'high') return 'строгий';
+  if (mode === 'normal') return 'обычный';
+  if (mode === 'low') return 'мягкий';
+  return mode;
+}
+
+function tradeStatusLabel(status?: string): string {
+  const labels: Record<string, string> = {
+    open: 'открыта',
+    tp1_hit: 'TP1 достигнут',
+    tp2_hit: 'TP2 достигнут',
+    tp3_hit: 'TP3 достигнут',
+    breakeven: 'безубыток',
+    partially_closed: 'частично закрыта',
+    closed_win: 'закрыта в плюс',
+    closed_loss: 'закрыта в минус',
+    closed_breakeven: 'закрыта в безубыток',
+    cancelled: 'отменена',
+    closed_tp1: 'закрыта на TP1',
+    closed_tp2: 'закрыта на TP2',
+    closed_tp3: 'закрыта на TP3',
+    closed_sl: 'закрыта по стопу',
+    closed_manual: 'закрыта вручную',
+  };
+  return status ? labels[status] ?? status : 'нет данных';
+}
+
 async function handleStart(chatId: string, fromId?: string): Promise<void> {
   logger.info(`START: chat=${chatId}, from=${fromId ?? 'unknown'}, admin=${config.telegram.adminId}`);
 
   if (isAdminMessage(chatId, fromId)) {
-    await bot.sendMessage(chatId, `🤖 OKX Bot Control Panel
-Build: ${BUILD_VERSION}`, {
+    await bot.sendMessage(chatId, `🤖 Панель управления OKX Bot
+Сборка: ${BUILD_VERSION}`, {
       reply_markup: getAdminKeyboard(),
     });
     return;
@@ -246,7 +275,7 @@ async function handleMarket(chatId: string): Promise<void> {
 }
 
 async function handlePause(chatId: string): Promise<void> {
-  pauseBot('Ручная остановка через admin panel');
+  pauseBot('Ручная остановка через панель администратора');
   await send(chatId, '⛔ Торговля остановлена вручную.');
 }
 
@@ -258,8 +287,8 @@ async function handleResume(chatId: string): Promise<void> {
 async function handleMode(chatId: string): Promise<void> {
   const state = getBotState();
   await send(chatId, `⚙️ <b>Текущий режим:</b> ${state.mode.toUpperCase()}
-LIVE_TRADING: ${config.trading.isLive ? '🟢 включен' : '🔴 выключен'}
-QUALITY_MODE: ${config.trading.qualityMode}`);
+Реальная торговля: ${config.trading.isLive ? '🟢 включена' : '🔴 выключена'}
+Режим качества: ${qualityModeLabel(config.trading.qualityMode)}`);
 }
 
 async function handleRisk(chatId: string): Promise<void> {
@@ -272,16 +301,16 @@ async function handleRisk(chatId: string): Promise<void> {
 }
 
 async function handleHealth(chatId: string): Promise<void> {
-  await send(chatId, `🟢 Bot online\nBuild: ${BUILD_VERSION}\n\n${generateHeartbeatReport()}`);
+  await send(chatId, `🟢 Бот онлайн\nСборка: ${BUILD_VERSION}\n\n${generateHeartbeatReport()}`);
 }
 
 async function handleFilters(chatId: string): Promise<void> {
-  await send(chatId, `🧰 <b>Filters</b>
-MIN_ATR_PERCENT=${config.trading.minAtrPercent}
-MAX_ATR_PERCENT=${config.trading.maxAtrPercent}
-MIN_SIGNAL_CONFIDENCE=${config.trading.minSignalConfidence}
-MIN_VOLUME_MULTIPLIER=${config.trading.minVolumeMultiplier}
-QUALITY_MODE=${config.trading.qualityMode}`);
+  await send(chatId, `🧰 <b>Фильтры</b>
+Мин. ATR % = ${config.trading.minAtrPercent}
+Макс. ATR % = ${config.trading.maxAtrPercent}
+Мин. уверенность = ${config.trading.minSignalConfidence}
+Мин. объем = ${config.trading.minVolumeMultiplier}
+Режим качества = ${qualityModeLabel(config.trading.qualityMode)}`);
 }
 
 async function handleClosed(chatId: string): Promise<void> {
@@ -292,18 +321,18 @@ async function handleClosed(chatId: string): Promise<void> {
   }
   const text = trades.map(t => {
     const pnl = resolveTradePnlPercent(t);
-    return `• #${t.id} ${t.symbol} ${t.direction} ${formatPercent(pnl)} | ${t.status}`;
+    return `• #${t.id} ${t.symbol} ${formatDirection(t.direction)} ${formatPercent(pnl)} | ${tradeStatusLabel(t.status)}`;
   }).join('\n');
   await send(chatId, `📜 <b>Последние сделки</b>
 ${text}`);
 }
 
 async function handleScan(chatId: string): Promise<void> {
-  await send(chatId, '📡 Scan now: раздел в разработке. Планировщик продолжает сканировать рынок автоматически.');
+  await send(chatId, '📡 Сканирование: раздел в разработке. Планировщик продолжает сканировать рынок автоматически.');
 }
 
 async function handleLogs(chatId: string): Promise<void> {
-  await send(chatId, '🧾 Логи: раздел в разработке. Смотрите Railway logs для runtime diagnostics.');
+  await send(chatId, '🧾 Логи: раздел в разработке. Смотрите логи Railway для диагностики запуска.');
 }
 
 async function handleVersion(chatId: string): Promise<void> {
@@ -347,18 +376,18 @@ function resolveTradePnlUsdt(trade: Trade, pnlPercent: number): number {
 function buildTradeMessage(trade: Trade): string {
   const pnl = resolveTradePnlPercent(trade);
   const pnlUsdt = resolveTradePnlUsdt(trade, pnl);
-  return `🧾 <b>Trade #${trade.id}</b>
+  return `🧾 <b>Сделка #${trade.id}</b>
 
-${trade.symbol} ${trade.direction}
-Status: <b>${trade.status}</b>
+${trade.symbol} ${formatDirection(trade.direction)}
+Статус: <b>${tradeStatusLabel(trade.status)}</b>
 
-Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
-SL: <b>${formatPrice(trade.symbol, trade.stopLoss)}</b>
+Вход: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
+Стоп: <b>${formatPrice(trade.symbol, trade.stopLoss)}</b>
 TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>
 TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>
 TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>
-${trade.exitPrice ? `Exit: <b>${formatPrice(trade.symbol, trade.exitPrice)}</b>\n` : ''}
-PnL: <b>${formatPercent(pnl)} | ${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT</b>`;
+${trade.exitPrice ? `Выход: <b>${formatPrice(trade.symbol, trade.exitPrice)}</b>\n` : ''}
+Результат: <b>${formatPercent(pnl)} | ${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT</b>`;
 }
 
 function buildStatsMessage(): string {
@@ -369,26 +398,26 @@ function buildStatsMessage(): string {
   const totalPnl = trades.reduce((a, t) => a + (t.pnlPercent ?? 0), 0);
   return `📊 <b>Статистика</b>
 Сделок: ${trades.length} | ✅ ${wins.length} | ❌ ${losses.length}
-Winrate: <b>${winRate.toFixed(1)}%</b>
-PnL: <b>${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}%</b>`;
+Винрейт: <b>${winRate.toFixed(1)}%</b>
+Результат: <b>${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}%</b>`;
 }
 
 function buildPositionsMessage(): string {
   const trades = getOpenTrades();
   if (!trades.length) return '📭 Нет открытых позиций.';
   return `📂 <b>Открытые позиции</b>
-${trades.map(t => `• #${t.id} ${t.symbol} ${t.direction} @ ${formatPrice(t.symbol, t.entryPrice)} | SL: ${formatPrice(t.symbol, t.stopLoss)} | TP1: ${formatPrice(t.symbol, t.takeProfit1)} | TP2: ${formatPrice(t.symbol, t.takeProfit2)} | TP3: ${formatPrice(t.symbol, t.takeProfit3)}`).join('\n')}`;
+${trades.map(t => `• #${t.id} ${t.symbol} ${formatDirection(t.direction)} @ ${formatPrice(t.symbol, t.entryPrice)} | Стоп: ${formatPrice(t.symbol, t.stopLoss)} | TP1: ${formatPrice(t.symbol, t.takeProfit1)} | TP2: ${formatPrice(t.symbol, t.takeProfit2)} | TP3: ${formatPrice(t.symbol, t.takeProfit3)}`).join('\n')}`;
 }
 
 function buildWinrateMessage(): string {
   const rows = getWinrateBySymbol();
-  if (!rows.length) return 'Недостаточно данных для расчета winrate.';
+  if (!rows.length) return 'Недостаточно данных для расчета винрейта.';
 
   const text = rows
-    .map(row => `${row.symbol.replace('-USDT-SWAP', '')} — ${row.winrate.toFixed(0)}% | ${row.trades} trades | ${row.pnlPercent >= 0 ? '+' : ''}${row.pnlPercent.toFixed(1)}%`)
+    .map(row => `${row.symbol.replace('-USDT-SWAP', '')} — ${row.winrate.toFixed(0)}% | ${row.trades} сделок | ${row.pnlPercent >= 0 ? '+' : ''}${row.pnlPercent.toFixed(1)}%`)
     .join('\n');
 
-  return `📊 <b>Winrate по монетам</b>
+  return `📊 <b>Винрейт по монетам</b>
 
 ${text}`;
 }

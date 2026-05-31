@@ -8,22 +8,22 @@ export function decimalsForSymbol(symbol: string): number {
 }
 
 export function formatPrice(symbol: string, value: number | undefined | null): string {
-  if (value === undefined || value === null || !Number.isFinite(value)) return 'n/a';
+  if (value === undefined || value === null || !Number.isFinite(value)) return 'нет данных';
   return value.toFixed(decimalsForSymbol(symbol));
 }
 
 export function formatPercent(value: number | undefined | null, digits = 2): string {
-  if (value === undefined || value === null || !Number.isFinite(value)) return 'n/a';
+  if (value === undefined || value === null || !Number.isFinite(value)) return 'нет данных';
   return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}%`;
 }
 
 export function formatUnsignedPercent(value: number | undefined | null, digits = 2): string {
-  if (value === undefined || value === null || !Number.isFinite(value)) return 'n/a';
+  if (value === undefined || value === null || !Number.isFinite(value)) return 'нет данных';
   return `${value.toFixed(digits)}%`;
 }
 
 export function formatDirection(direction: Direction): string {
-  return direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+  return direction === 'LONG' ? '🟢 ЛОНГ' : '🔴 ШОРТ';
 }
 
 export function formatTradingViewSymbol(symbol: string): string {

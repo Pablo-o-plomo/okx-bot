@@ -10,14 +10,14 @@ export function generateMarketSummary(): string {
   const strongest = signals.filter(s => s.confidence >= avgConfidence).slice(0, 5).map(s => s.symbol.replace('-USDT-SWAP', ''));
   const weakest = closed.filter(t => (t.pnlPercent ?? 0) < 0).slice(0, 5).map(t => t.symbol.replace('-USDT-SWAP', ''));
   const highVol = signals.filter(s => s.indicatorSummary?.atrPercent >= 1.5).map(s => s.symbol.replace('-USDT-SWAP', ''));
-  const mode = avgConfidence >= 8 && rejected < 20 ? 'aggressive' : avgConfidence >= 6 ? 'normal' : 'defensive';
+  const mode = avgConfidence >= 8 && rejected < 20 ? 'агрессивный' : avgConfidence >= 6 ? 'нормальный' : 'защитный';
 
   return `
-🌍 <b>AI Market Summary</b>
+🌍 <b>Сводка рынка</b>
 
 Тренд рынка: <b>${longCount >= signals.length / 2 ? 'бычий' : 'медвежий'}</b>
-Сильнее выглядят: ${strongest.join(', ') || 'n/a'}
-Слабее выглядят: ${weakest.join(', ') || 'n/a'}
+Сильнее выглядят: ${strongest.join(', ') || 'нет данных'}
+Слабее выглядят: ${weakest.join(', ') || 'нет данных'}
 Волатильность: ${highVol.length ? `высокая (${highVol.join(', ')})` : 'нормальная'}
 Отклонено фильтрами за 24ч: <b>${rejected}</b>
 Рекомендация: <b>${mode}</b>

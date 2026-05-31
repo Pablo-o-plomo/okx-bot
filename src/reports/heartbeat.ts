@@ -12,16 +12,16 @@ export function generateHeartbeatReport(): string {
     : null;
 
   return `
-💓 <b>Bot Alive</b>
+💓 <b>Бот работает</b>
 
-Signals scanned: <b>${runtime.signalsScanned}</b>
-Accepted: <b>${runtime.signalsAccepted}</b>
-Rejected (1h): <b>${rejectsLastHour}</b>
+Просканировано сигналов: <b>${runtime.signalsScanned}</b>
+Принято: <b>${runtime.signalsAccepted}</b>
+Отклонено за 1ч: <b>${rejectsLastHour}</b>
 
-<b>Top rejects:</b>
+<b>Топ причин отклонения:</b>
 ${topRejects.length ? topRejects.map(r => `• ${r.reason}: ${r.count}`).join('\n') : '• нет данных'}
 
-Open trades: <b>${openTrades}</b>
-Winrate: <b>${avgWinrate === null ? 'Недостаточно данных для расчета winrate.' : `${avgWinrate.toFixed(0)}%`}</b>
+Открытых сделок: <b>${openTrades}</b>
+Винрейт: <b>${avgWinrate === null ? 'Недостаточно данных для расчета винрейта.' : `${avgWinrate.toFixed(0)}%`}</b>
 `.trim();
 }

@@ -40,16 +40,16 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
         { text: '📂 Позиции', callback_data: 'positions' },
       ],
       [
-        { text: '📈 Winrate', callback_data: 'winrate' },
+        { text: '📈 Винрейт', callback_data: 'winrate' },
         { text: '🧠 Анализ', callback_data: 'analyze' },
       ],
       [
         { text: '📄 Отчет', callback_data: 'report' },
-        { text: '🚫 Rejects', callback_data: 'rejects' },
+        { text: '🚫 Отклонения', callback_data: 'rejects' },
       ],
       [
-        { text: '🌍 Market', callback_data: 'market' },
-        { text: '💓 Health', callback_data: 'health' },
+        { text: '🌍 Рынок', callback_data: 'market' },
+        { text: '💓 Здоровье', callback_data: 'health' },
       ],
       [
         { text: '⚙️ Режим', callback_data: 'mode' },
@@ -57,11 +57,11 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
       ],
       [
         { text: '⏸ Пауза', callback_data: 'pause' },
-        { text: '▶️ Resume', callback_data: 'resume' },
+        { text: '▶️ Возобновить', callback_data: 'resume' },
       ],
       [
         { text: '📜 Последние сделки', callback_data: 'closed' },
-        { text: '📡 Scan now', callback_data: 'scan' },
+        { text: '📡 Сканировать', callback_data: 'scan' },
       ],
       [
         { text: '🧾 Логи', callback_data: 'logs' },
@@ -72,7 +72,7 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
 }
 
 export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<void> {
-  await bot.sendMessage(chatId, `🤖 OKX Bot Control Panel\n\nBuild:\n${BUILD_VERSION}`, {
+  await bot.sendMessage(chatId, `🤖 Панель управления OKX Bot\n\nСборка:\n${BUILD_VERSION}`, {
     reply_markup: getAdminKeyboard(),
   });
 }
@@ -84,7 +84,7 @@ export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.C
   const userId = query.from.id;
   const messageChatId = query.message?.chat.id;
   if (userId !== adminId || messageChatId !== adminId) {
-    await bot.answerCallbackQuery(query.id, { text: 'Access denied' });
+    await bot.answerCallbackQuery(query.id, { text: 'Доступ запрещен' });
     return true;
   }
 
