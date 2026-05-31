@@ -19,6 +19,13 @@ export const adminCallbacks: Record<string, string> = {
 type AdminCommandHandler = (chatId: string, command: string) => Promise<void>;
 let adminCommandHandler: AdminCommandHandler | undefined;
 
+function getConfiguredAdminIds(): number[] {
+  return config.telegram.adminId
+    .split(',')
+    .map(id => Number(id.trim()))
+    .filter(id => Number.isFinite(id));
+}
+
 export function setAdminCommandHandler(handler: AdminCommandHandler): void {
   adminCommandHandler = handler;
 }
@@ -55,35 +62,36 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
 }
 
 export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<void> {
-  await bot.sendMessage(chatId, '🤖 <b>OKX Bot Control Panel</b>\n\nВыберите действие кнопкой ниже:', {
-    parse_mode: 'HTML',
+  await bot.sendMessage(chatId, '🤖 OKX Bot Control Panel', {
     reply_markup: getAdminKeyboard(),
-    disable_web_page_preview: true,
   });
 }
 
 export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.CallbackQuery): Promise<boolean> {
   if (!query.data) return false;
 
-  const adminIds = config.telegram.adminId.split(',').map(id => id.trim()).filter(Boolean);
-  const userId = query.from.id.toString();
+  const adminIds = getConfiguredAdminIds();
+  const userId = query.from.id;
   if (!adminIds.includes(userId)) {
-    await bot.answerCallbackQuery(query.id, { text: 'Access denied', show_alert: true });
+    await bot.answerCallbackQuery(query.id, { text: 'Access denied' });
     return true;
   }
 
   const key = query.data;
   const command = adminCallbacks[key];
+  const targetChatId = query.message?.chat.id.toString() ?? userId.toString();
+
   if (!command) {
-    await bot.answerCallbackQuery(query.id, { text: 'Раздел в разработке', show_alert: true });
+    await bot.answerCallbackQuery(query.id, { text: 'Раздел в разработке' });
+    await bot.sendMessage(targetChatId, 'Раздел в разработке');
     return true;
   }
 
   await bot.answerCallbackQuery(query.id);
   if (adminCommandHandler) {
-    await adminCommandHandler(userId, command);
+    await adminCommandHandler(targetChatId, command);
   } else {
-    await bot.sendMessage(userId, 'Раздел в разработке');
+    await bot.sendMessage(targetChatId, 'Раздел в разработке');
   }
   return true;
 }

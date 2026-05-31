@@ -28,13 +28,15 @@ import { generateMarketSummary } from '../reports/marketSummary';
 import { generateErrorAnalysis } from '../reports/errorAnalysis';
 import { generateRejectStats } from '../reports/rejectStats';
 import { generateHeartbeatReport } from '../reports/heartbeat';
-import { handleAdminCallback, sendAdminMenu, setAdminCommandHandler } from './adminMenu';
+import { getAdminKeyboard, handleAdminCallback, setAdminCommandHandler } from './adminMenu';
 import { formatPercent, formatPrice } from '../utils/formatPrice';
 import type { Signal, Trade } from '../database/models';
 
 let bot: TelegramBot;
 const ADMIN_IDS = config.telegram.adminId
-  ? config.telegram.adminId.split(',').map(id => id.trim()).filter(Boolean)
+  ? config.telegram.adminId.split(',')
+    .map(id => Number(id.trim()))
+    .filter(id => Number.isFinite(id))
   : [];
 
 export function initTelegramBot(): TelegramBot {
@@ -52,9 +54,14 @@ export function getBot(): TelegramBot {
   return bot;
 }
 
-function isAdmin(chatId: string | number): boolean {
-  if (ADMIN_IDS.length === 0) return false;
-  return ADMIN_IDS.includes(String(chatId).trim());
+function isAdmin(id: string | number | undefined): boolean {
+  if (id === undefined || ADMIN_IDS.length === 0) return false;
+  const numericId = Number(id);
+  return Number.isFinite(numericId) && ADMIN_IDS.includes(numericId);
+}
+
+function isAdminMessage(chatId: string | number, fromId?: string | number): boolean {
+  return isAdmin(chatId) || isAdmin(fromId);
 }
 
 async function denyIfNotAdmin(chatId: string): Promise<boolean> {
@@ -72,10 +79,19 @@ function registerAdminTextCommand(command: RegExp, action: string): void {
 }
 
 function registerCommands(): void {
-  bot.onText(/\/start/, async (msg) => {
+  bot.onText(/^\/start(?:@\w+)?(?:\s|$)/, async (msg) => {
     const chatId = msg.chat.id.toString();
-    if (await denyIfNotAdmin(chatId)) return;
-    await sendAdminMenu(bot, chatId);
+    const fromId = msg.from?.id.toString();
+    logger.info(`START command from chat=${chatId}, from=${fromId ?? 'unknown'}, admin=${config.telegram.adminId}`);
+
+    if (isAdminMessage(chatId, fromId)) {
+      await bot.sendMessage(chatId, '🤖 OKX Bot Control Panel', {
+        reply_markup: getAdminKeyboard(),
+      });
+      return;
+    }
+
+    await bot.sendMessage(chatId, 'Бот работает. Доступ к панели только у администратора.');
   });
 
   bot.onText(/\/balance/, async (msg) => {
