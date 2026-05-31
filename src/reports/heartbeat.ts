@@ -9,7 +9,7 @@ export function generateHeartbeatReport(): string {
   const winrates = getWinrateBySymbol();
   const avgWinrate = winrates.length
     ? winrates.reduce((sum, row) => sum + row.winrate, 0) / winrates.length
-    : 0;
+    : null;
 
   return `
 💓 <b>Bot Alive</b>
@@ -22,6 +22,6 @@ Rejected (1h): <b>${rejectsLastHour}</b>
 ${topRejects.length ? topRejects.map(r => `• ${r.reason}: ${r.count}`).join('\n') : '• нет данных'}
 
 Open trades: <b>${openTrades}</b>
-Winrate: <b>${avgWinrate.toFixed(0)}%</b>
+Winrate: <b>${avgWinrate === null ? 'Недостаточно данных для расчета winrate.' : `${avgWinrate.toFixed(0)}%`}</b>
 `.trim();
 }

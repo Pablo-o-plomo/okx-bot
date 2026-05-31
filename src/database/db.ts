@@ -433,15 +433,22 @@ export function getRejectCountSince(hours: number): number {
 
 export function getWinrateBySymbol(): Array<{ symbol: string; winrate: number; trades: number; pnlPercent: number }> {
   const rows = db.prepare(`
-    SELECT symbol,
-      COUNT(*) as trades,
-      SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) as wins,
-      AVG(COALESCE(pnl_percent,0)) as avg_pnl
+    SELECT
+      symbol,
+      COUNT(*) AS trades,
+      SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
+      AVG(COALESCE(pnl_percent, 0)) AS avg_pnl
     FROM trades
-    WHERE status != 'open'
+    WHERE status NOT IN ('open', 'tp1_hit', 'tp2_hit', 'breakeven', 'partially_closed')
     GROUP BY symbol
     HAVING COUNT(*) > 0
-    ORDER BY winrate DESC
-  `).all() as any[];
-  return rows.map(r => ({ symbol: r.symbol, trades: r.trades, winrate: (r.wins / r.trades) * 100, pnlPercent: r.avg_pnl }));
+    ORDER BY (SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) DESC
+  `).all() as Array<{ symbol: string; trades: number; wins: number; avg_pnl: number }>;
+
+  return rows.map(row => ({
+    symbol: row.symbol,
+    trades: row.trades,
+    winrate: row.trades > 0 ? (row.wins / row.trades) * 100 : 0,
+    pnlPercent: row.avg_pnl ?? 0,
+  }));
 }

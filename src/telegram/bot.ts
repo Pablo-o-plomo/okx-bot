@@ -382,7 +382,12 @@ ${trades.map(t => `• #${t.id} ${t.symbol} ${t.direction} @ ${formatPrice(t.sym
 
 function buildWinrateMessage(): string {
   const rows = getWinrateBySymbol();
-  const text = rows.length ? rows.map(r => `${r.symbol.replace('-USDT-SWAP', '')} — ${r.winrate.toFixed(0)}% | ${r.trades} trades | ${r.pnlPercent >= 0 ? '+' : ''}${r.pnlPercent.toFixed(1)}%`).join('\n') : 'нет данных';
+  if (!rows.length) return 'Недостаточно данных для расчета winrate.';
+
+  const text = rows
+    .map(row => `${row.symbol.replace('-USDT-SWAP', '')} — ${row.winrate.toFixed(0)}% | ${row.trades} trades | ${row.pnlPercent >= 0 ? '+' : ''}${row.pnlPercent.toFixed(1)}%`)
+    .join('\n');
+
   return `📊 <b>Winrate по монетам</b>
 
 ${text}`;
