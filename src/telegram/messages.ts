@@ -33,6 +33,10 @@ function volumeLabel(ratio: number, state?: string): string {
   return `нормальный (x${ratio.toFixed(1)})`;
 }
 
+function formatUsdt(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)} USDT`;
+}
+
 function signalTone(signal: Signal): string {
   if (signal.warnings.length > 0) return '🟡 Осторожный сигнал';
   if (signal.confidence >= 8) return '🟢 Сильный сигнал';
@@ -116,6 +120,7 @@ ${progressLines(trade.progress)}
 
 export function sendTradeUpdate(trade: Trade, tpLevel: number, currentPrice: number): string {
   const pnl = calculatePnlPercent(trade, currentPrice);
+  const pnlUsdt = (pnl / 100) * trade.positionSize * trade.entryPrice;
   const progress = trade.progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false };
   const updatedProgress = {
     ...progress,
@@ -136,7 +141,7 @@ ${tpLevel === 1 ? '🛡 Стоп перенесен в безубыток\n' : '
 📊 <b>Прогресс:</b>
 ${progressLines(updatedProgress)}
 
-💰 Текущий результат: <b>${formatPercent(pnl)}</b>
+💰 Текущий результат: <b>${formatPercent(pnl)} | ${formatUsdt(pnlUsdt)}</b>
 
 🗣 <i>${getTpComment(tpLevel, trade.id ?? currentPrice)}</i>
 `.trim();
@@ -144,6 +149,7 @@ ${progressLines(updatedProgress)}
 
 export function formatTradeClosedMessage(trade: Trade, improvements?: string[]): string {
   const pnl = trade.finalPnl ?? trade.pnlPercent ?? 0;
+  const pnlUsdt = tradePnlUsdt(trade, 1000);
   const isBreakeven = trade.result === 'breakeven' || Math.abs(pnl) < 0.01;
   const isWin = trade.result === 'win' || pnl > 0;
   const title = isBreakeven
@@ -163,7 +169,7 @@ ${!isWin && !isBreakeven ? '🛑 Сработал стоп-лосс\n' : ''}🎯
 🎯 TP3 ${trade.progress?.tp3 ? '✅' : '—'}
 
 📌 Финальный статус: <b>${finalStatus}</b>
-💰 Финальный результат: <b>${formatPercent(pnl)}</b>
+💰 Финальный результат: <b>${formatPercent(pnl)} | ${formatUsdt(pnlUsdt)}</b>
 
 <b>${isWin ? 'Причина выхода' : 'Причина'}:</b>
 ${bullets(normalizeBullets(trade.exitReason))}
@@ -219,12 +225,12 @@ export function formatDailyReport(
   const totalPnlPercent = closed.reduce((sum, trade) => sum + resolveTradePnlPercent(trade), 0);
   const totalPnlUsdt = closed.reduce((sum, trade) => sum + tradePnlUsdt(trade, fallbackBalance), 0);
   const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
-  const signedTotalPnlUsdt = `${totalPnlUsdt >= 0 ? '+' : ''}${totalPnlUsdt.toFixed(2)} USDT`;
+  const signedTotalPnlUsdt = formatUsdt(totalPnlUsdt);
 
   const detailLines = closed.map(trade => {
     const pnlPercent = resolveTradePnlPercent(trade);
     const pnlUsdt = tradePnlUsdt(trade, fallbackBalance);
-    const signedPnlUsdt = `${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT`;
+    const signedPnlUsdt = formatUsdt(pnlUsdt);
     return `• ${trade.symbol} ${trade.direction}: ${formatPercent(pnlPercent)} | ${signedPnlUsdt}`;
   }).join('\n');
 
