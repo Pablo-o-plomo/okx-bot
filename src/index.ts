@@ -1,3 +1,4 @@
+console.log("🔥 LIVE BUILD CHECK: buttons-v6-2026-05-31-14-45");
 console.log("🔥 BUILD VERSION 2.0.0-buttons-fix");
 import 'dotenv/config';
 import fs from 'fs';

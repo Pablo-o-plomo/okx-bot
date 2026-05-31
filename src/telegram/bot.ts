@@ -47,6 +47,7 @@ export function initTelegramBot(): TelegramBot {
   setAdminCommandHandler(handleAdminCommand);
   registerCommands();
   logger.info('🤖 Telegram bot started');
+  logger.info("🔥 TELEGRAM BUILD: buttons-v6-2026-05-31-14-45");
   logger.info(`BUILD VERSION: ${BUILD_VERSION}`);
 
   return bot;
@@ -306,8 +307,7 @@ async function handleLogs(chatId: string): Promise<void> {
 }
 
 async function handleVersion(chatId: string): Promise<void> {
-  await send(chatId, `🧠 Current build:
-${BUILD_VERSION}`);
+  await send(chatId, 'buttons-v6-2026-05-31-14-45');
 }
 
 async function handleTrade(chatId: string, tradeId: number): Promise<void> {
