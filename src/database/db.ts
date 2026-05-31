@@ -110,23 +110,60 @@ function createTables(): void {
 
     INSERT OR IGNORE INTO bot_state (id) VALUES (1);
   `);
+
+  runSafeMigrations();
 }
+
+function addColumnIfMissing(table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some(c => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+function runSafeMigrations(): void {
+  addColumnIfMissing('signals', 'warnings', `TEXT DEFAULT '[]'`);
+  addColumnIfMissing('signals', 'timeframe_confirmations', `TEXT DEFAULT '[]'`);
+  addColumnIfMissing('signals', 'indicator_summary', 'TEXT');
+
+  addColumnIfMissing('trades', 'tp1_hit_at', 'TEXT');
+  addColumnIfMissing('trades', 'tp2_hit_at', 'TEXT');
+  addColumnIfMissing('trades', 'tp3_hit_at', 'TEXT');
+  addColumnIfMissing('trades', 'breakeven_moved_at', 'TEXT');
+  addColumnIfMissing('trades', 'close_reason', 'TEXT');
+  addColumnIfMissing('trades', 'final_pnl', 'REAL');
+  addColumnIfMissing('trades', 'current_pnl', 'REAL DEFAULT 0');
+  addColumnIfMissing('trades', 'progress_json', `TEXT DEFAULT '{"tp1":false,"tp2":false,"tp3":false,"breakeven":false,"partiallyClosed":false}'`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reject_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol TEXT NOT NULL,
+      timeframe TEXT,
+      reason TEXT NOT NULL,
+      details TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+}
+
 
 // ─── Signals ──────────────────────────────────────────────────────────────────
 export function saveSignal(signal: Signal): number {
   const stmt = db.prepare(`
     INSERT INTO signals (symbol, direction, entry_price, stop_loss, take_profit1,
       take_profit2, take_profit3, risk_percent, position_size, leverage,
-      risk_reward, confidence, reasons, cancel_conditions, timeframe, status, indicators)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      risk_reward, confidence, reasons, warnings, timeframe_confirmations, indicator_summary, cancel_conditions, timeframe, status, indicators)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     signal.symbol, signal.direction, signal.entryPrice, signal.stopLoss,
     signal.takeProfit1, signal.takeProfit2, signal.takeProfit3,
     signal.riskPercent, signal.positionSize, signal.leverage,
     signal.riskReward, signal.confidence,
-    JSON.stringify(signal.reasons), JSON.stringify(signal.cancelConditions),
-    signal.timeframe, signal.status,
+    JSON.stringify(signal.reasons), JSON.stringify(signal.warnings),
+    JSON.stringify(signal.timeframeConfirmations), JSON.stringify(signal.indicatorSummary),
+    JSON.stringify(signal.cancelConditions), signal.timeframe, signal.status,
     signal.indicators ? JSON.stringify(signal.indicators) : null,
   );
   return result.lastInsertRowid as number;
@@ -153,6 +190,9 @@ function rowToSignal(row: any): Signal {
     riskReward: row.risk_reward,
     confidence: row.confidence,
     reasons: JSON.parse(row.reasons),
+    warnings: JSON.parse(row.warnings || '[]'),
+    timeframeConfirmations: JSON.parse(row.timeframe_confirmations || JSON.stringify([row.timeframe])),
+    indicatorSummary: row.indicator_summary ? JSON.parse(row.indicator_summary) : { ema20: 0, ema50: 0, ema200: 0, emaAlignment: 'n/a', rsi: 0, rsiState: 'n/a', macd: 'neutral', macdState: 'n/a', atr: 0, atrPercent: 0, volumeRatio: 0, volumeState: 'none' },
     cancelConditions: JSON.parse(row.cancel_conditions),
     timeframe: row.timeframe,
     status: row.status,
@@ -166,8 +206,8 @@ export function saveTrade(trade: Trade): number {
   const stmt = db.prepare(`
     INSERT INTO trades (signal_id, symbol, direction, entry_price, stop_loss,
       take_profit1, take_profit2, take_profit3, position_size, leverage,
-      status, entry_reasons, indicators_at_entry)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      status, entry_reasons, indicators_at_entry, progress_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     trade.signalId, trade.symbol, trade.direction, trade.entryPrice,
@@ -175,6 +215,7 @@ export function saveTrade(trade: Trade): number {
     trade.positionSize, trade.leverage, trade.status,
     JSON.stringify(trade.entryReasons),
     trade.indicatorsAtEntry ? JSON.stringify(trade.indicatorsAtEntry) : null,
+    JSON.stringify(trade.progress || { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false }),
   );
   return result.lastInsertRowid as number;
 }
@@ -195,23 +236,23 @@ export function closeTrade(
     UPDATE trades SET
       exit_price = ?, status = ?, result = ?, pnl_percent = ?, pnl_usdt = ?,
       exit_reason = ?, exit_analysis = ?, improvements = ?, error_tags = ?,
-      closed_at = CURRENT_TIMESTAMP
+      close_reason = ?, final_pnl = ?, current_pnl = ?, closed_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
     exitPrice, status, result, pnlPercent, pnlUsdt,
     exitReason, exitAnalysis,
     JSON.stringify(improvements), JSON.stringify(errorTags),
-    id,
+    exitReason, pnlPercent, pnlPercent, id,
   );
 }
 
 export function getOpenTrades(): Trade[] {
-  const rows = db.prepare("SELECT * FROM trades WHERE status = 'open'").all() as any[];
+  const rows = db.prepare("SELECT * FROM trades WHERE status IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed')").all() as any[];
   return rows.map(rowToTrade);
 }
 
 export function getOpenTradeBySymbol(symbol: string): Trade | null {
-  const row = db.prepare("SELECT * FROM trades WHERE symbol = ? AND status = 'open'").get(symbol) as any;
+  const row = db.prepare("SELECT * FROM trades WHERE symbol = ? AND status IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed')").get(symbol) as any;
   return row ? rowToTrade(row) : null;
 }
 
@@ -221,14 +262,14 @@ export function getTradeById(id: number): Trade | null {
 }
 
 export function getLastNTrades(n: number): Trade[] {
-  const rows = db.prepare("SELECT * FROM trades WHERE status != 'open' ORDER BY closed_at DESC LIMIT ?").all(n) as any[];
+  const rows = db.prepare("SELECT * FROM trades WHERE status NOT IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed') ORDER BY closed_at DESC LIMIT ?").all(n) as any[];
   return rows.map(rowToTrade);
 }
 
 export function getTodayTrades(): Trade[] {
   const rows = db.prepare(`
     SELECT * FROM trades 
-    WHERE DATE(opened_at) = DATE('now') AND status != 'open'
+    WHERE DATE(opened_at) = DATE('now') AND status NOT IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed')
   `).all() as any[];
   return rows.map(rowToTrade);
 }
@@ -251,12 +292,20 @@ function rowToTrade(row: any): Trade {
     result: row.result ?? undefined,
     pnlPercent: row.pnl_percent ?? undefined,
     pnlUsdt: row.pnl_usdt ?? undefined,
+    finalPnl: row.final_pnl ?? undefined,
+    currentPnl: row.current_pnl ?? undefined,
+    closeReason: row.close_reason ?? undefined,
     entryReasons: JSON.parse(row.entry_reasons || '[]'),
     exitReason: row.exit_reason ?? undefined,
     exitAnalysis: row.exit_analysis ?? undefined,
     improvements: row.improvements ? JSON.parse(row.improvements) : undefined,
     errorTags: row.error_tags ? JSON.parse(row.error_tags) : undefined,
     indicatorsAtEntry: row.indicators_at_entry ? JSON.parse(row.indicators_at_entry) : undefined,
+    progress: row.progress_json ? JSON.parse(row.progress_json) : { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false },
+    tp1HitAt: row.tp1_hit_at ?? undefined,
+    tp2HitAt: row.tp2_hit_at ?? undefined,
+    tp3HitAt: row.tp3_hit_at ?? undefined,
+    breakevenMovedAt: row.breakeven_moved_at ?? undefined,
     openedAt: row.opened_at,
     closedAt: row.closed_at ?? undefined,
   };
@@ -313,4 +362,86 @@ export function updateBotState(partial: Partial<BotState>): void {
     merged.totalBalance,
     merged.mode,
   );
+}
+
+
+export function updateTradeLifecycle(
+  id: number,
+  patch: { status?: string; currentPnl?: number; progress?: unknown; tp1HitAt?: string; tp2HitAt?: string; tp3HitAt?: string; breakevenMovedAt?: string },
+): void {
+  const trade = getTradeById(id);
+  if (!trade) return;
+  db.prepare(`
+    UPDATE trades SET
+      status = ?, current_pnl = ?, progress_json = ?,
+      tp1_hit_at = COALESCE(?, tp1_hit_at),
+      tp2_hit_at = COALESCE(?, tp2_hit_at),
+      tp3_hit_at = COALESCE(?, tp3_hit_at),
+      breakeven_moved_at = COALESCE(?, breakeven_moved_at)
+    WHERE id = ?
+  `).run(
+    patch.status ?? trade.status,
+    patch.currentPnl ?? trade.currentPnl ?? 0,
+    JSON.stringify(patch.progress ?? trade.progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false }),
+    patch.tp1HitAt ?? null,
+    patch.tp2HitAt ?? null,
+    patch.tp3HitAt ?? null,
+    patch.breakevenMovedAt ?? null,
+    id,
+  );
+}
+
+export function recordReject(symbol: string, timeframe: string | undefined, reason: string, details?: string): void {
+  db.prepare('INSERT INTO reject_events (symbol, timeframe, reason, details) VALUES (?, ?, ?, ?)')
+    .run(symbol, timeframe ?? null, reason, details ?? null);
+}
+
+export function getRejectStats(limit = 100): Array<{ reason: string; count: number }> {
+  return db.prepare(`
+    SELECT reason, COUNT(*) as count
+    FROM reject_events
+    GROUP BY reason
+    ORDER BY count DESC
+    LIMIT ?
+  `).all(limit) as Array<{ reason: string; count: number }>;
+}
+
+export function getRejectStatsBySymbol(limit = 10): Array<{ symbol: string; count: number }> {
+  return db.prepare(`
+    SELECT symbol, COUNT(*) as count
+    FROM reject_events
+    GROUP BY symbol
+    ORDER BY count DESC
+    LIMIT ?
+  `).all(limit) as Array<{ symbol: string; count: number }>;
+}
+
+export function getRejectStatsByTimeframe(limit = 10): Array<{ timeframe: string; count: number }> {
+  return db.prepare(`
+    SELECT COALESCE(timeframe, 'n/a') as timeframe, COUNT(*) as count
+    FROM reject_events
+    GROUP BY COALESCE(timeframe, 'n/a')
+    ORDER BY count DESC
+    LIMIT ?
+  `).all(limit) as Array<{ timeframe: string; count: number }>;
+}
+
+export function getRejectCountSince(hours: number): number {
+  const row = db.prepare("SELECT COUNT(*) as count FROM reject_events WHERE created_at >= datetime('now', ?)").get(`-${hours} hours`) as { count: number };
+  return row.count;
+}
+
+export function getWinrateBySymbol(): Array<{ symbol: string; winrate: number; trades: number; pnlPercent: number }> {
+  const rows = db.prepare(`
+    SELECT symbol,
+      COUNT(*) as trades,
+      SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) as wins,
+      AVG(COALESCE(pnl_percent,0)) as avg_pnl
+    FROM trades
+    WHERE status != 'open'
+    GROUP BY symbol
+    HAVING COUNT(*) > 0
+    ORDER BY winrate DESC
+  `).all() as any[];
+  return rows.map(r => ({ symbol: r.symbol, trades: r.trades, winrate: (r.wins / r.trades) * 100, pnlPercent: r.avg_pnl }));
 }

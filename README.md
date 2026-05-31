@@ -111,11 +111,21 @@ src/
 
 | Команда | Описание |
 |---|---|
-| `/start` | Статус бота |
+| `/start` | Admin control panel с inline-кнопками |
+| `/menu` | Повторно показать admin keyboard |
 | `/balance` | Текущий баланс |
+| `/version` | Показать build version для диагностики Railway deploy |
 | `/signals` | Последние 5 сигналов |
 | `/positions` | Открытые позиции |
 | `/stats` | Статистика сделок |
+| `/winrate` | Winrate по монетам |
+| `/market` | Rule-based market summary |
+| `/rejects` | Статистика reject-фильтров |
+| `/health` | Health/heartbeat и build version |
+| `/filters` | Текущие filter settings |
+| `/closed` | Последние закрытые сделки |
+| `/scan` | Safe stub для ручного scan now |
+| `/logs` | Safe stub для логов |
 | `/pause` | Остановить торговлю |
 | `/resume` | Возобновить |
 | `/mode` | Текущий режим |
@@ -123,6 +133,8 @@ src/
 | `/report` | Дневной отчет |
 | `/errors` | Частые ошибки |
 | `/analyze` | Анализ последних 20 сделок |
+
+> Чтобы кнопки admin panel и текущий build version появились, напишите `/start` в личном чате с ботом. В канале сигналы публикуются через `TELEGRAM_CHAT_ID`, но панель управления показывается только личному `TELEGRAM_ADMIN_ID`.
 
 ## 🔒 Безопасность
 
@@ -146,3 +158,98 @@ src/
 ## ⚠️ Дисклеймер
 
 Бот не гарантирует прибыль. Торговля криптовалютами сопряжена с высоким риском. Используйте только те средства, потерю которых вы можете себе позволить. Это инструмент для обучения и тестирования стратегий.
+
+## New Telegram Commands
+- `/winrate` — winrate and PnL by symbol.
+- `/market` — daily rule-based market summary.
+- `/mode` — current mode + live/paper flags.
+- `/filters` — active filter thresholds.
+- `/analyze` — error/learning analysis.
+- `/pause` `/resume` — manual control.
+
+## New ENV Variables
+- `MIN_ATR_PERCENT=0.2`
+- `MAX_ATR_PERCENT=3`
+- `MIN_SIGNAL_CONFIDENCE=6`
+- `AUTO_OPTIMIZE=false`
+- `DEFENSIVE_MODE_DRAWDOWN=-5`
+
+## 🤖 AI Signal Engine Upgrade
+
+Бот работает как paper-first crypto signal engine: анализирует EMA/RSI/MACD/ATR/volume, фильтрует FOMO/волатильность/слабый объем и публикует только сигналы, прошедшие quality threshold.
+
+### Paper trading warning
+
+- `LIVE_TRADING=false` по умолчанию.
+- Если OKX ключи пустые или неполные, бот принудительно остается в paper mode.
+- Live trading не включается автоматически.
+- Telegram token и OKX API keys не логируются.
+
+### Lifecycle сделок
+
+Канал получает события:
+
+- `PAPER TRADE OPENED` / `LIVE TRADE OPENED`
+- `TP1 HIT`, `TP2 HIT`, `TP3 HIT`
+- перенос SL в breakeven
+- partial close / progress по целям
+- `TRADE CLOSED BY PLAN`
+- `TRADE CLOSED BY STOP`
+- `TRADE CLOSED AT BREAKEVEN`
+
+SQLite хранит progress сделки: `tp1_hit_at`, `tp2_hit_at`, `tp3_hit_at`, `breakeven_moved_at`, `close_reason`, `final_pnl`, `current_pnl`, `progress_json`.
+
+### Quality filters
+
+- Confidence score учитывает EMA trend, RSI, MACD, volume, ATR, breakout, multi-timeframe agreement и RR.
+- Anti-FOMO filter отклоняет late entry, extended move, fomo entry и плохой RR.
+- Volume filter отклоняет слабый объем по quality mode.
+- Volatility filter отклоняет слишком низкий/высокий ATR.
+
+### Market personality
+
+Стиль канала: «Отскок мёртвой кошки» — мрачноватый, ироничный, трейдерский, без мем-помойки. Комментарии находятся в `src/utils/wittyComments.ts`.
+
+### Admin panel
+
+`/start` в личном чате admin открывает inline keyboard:
+
+- 📊 Статистика
+- 📂 Позиции
+- 📈 Winrate
+- 🧠 Анализ
+- 📄 Отчет
+- 🚫 Rejects
+- 🌍 Market
+- ⏸ Пауза
+- ▶️ Resume
+- ⚙️ Режим
+- 🛡 Риски
+- 💓 Health
+- 📜 Последние сделки
+- 📡 Scan now
+- 🧾 Логи
+- 🧠 Версия
+
+Канал получает только сигналы/lifecycle/summary. Admin actions отвечают в личный чат admin.
+
+### Дополнительные команды
+
+- `/winrate` — winrate и PnL по монетам.
+- `/market` — rule-based AI market summary.
+- `/rejects` — статистика отклоненных сигналов.
+- `/filters` — активные thresholds.
+- `/health` — heartbeat/status.
+- `/analyze` — ML/error analysis.
+
+### Дополнительные ENV
+
+| Переменная | По умолчанию | Описание |
+|---|---:|---|
+| `MIN_ATR_PERCENT` | `0.2` | Минимальный ATR%, ниже рынок считается мертвым |
+| `MAX_ATR_PERCENT` | `3` | Максимальный ATR%, выше риск выноса |
+| `MIN_SIGNAL_CONFIDENCE` | `7` | Минимальный confidence score |
+| `MIN_VOLUME_MULTIPLIER` | `1.2` | Volume threshold для high-quality режима |
+| `QUALITY_MODE` | `high` | `low`, `normal`, `high` |
+| `AUTO_OPTIMIZE` | `false` | Флаг для будущей авто-оптимизации |
+| `DEFENSIVE_MODE_DRAWDOWN` | `5` | Пауза/defensive mode при просадке хуже -5% |
