@@ -1,6 +1,6 @@
 {
   "name": "okx-trading-bot",
-  "version": "1.0.0",
+  "version": "1.0.99",
   "description": "OKX Trading Bot with Telegram notifications",
   "main": "dist/index.js",
   "scripts": {

@@ -41,6 +41,7 @@ const ADMIN_IDS = config.telegram.adminId
   : [];
 
 export function initTelegramBot(): TelegramBot {
+  console.log('FORCED BUILD 2026-05-31-13-45');
   bot = new TelegramBot(config.telegram.botToken, { polling: true });
 
   setAdminCommandHandler(handleAdminCommand);
