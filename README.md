@@ -64,6 +64,7 @@ npm start
 | `TELEGRAM_BOT_TOKEN` | — | Токен бота |
 | `TELEGRAM_CHAT_ID` | — | ID канала для публикации сигналов |
 | `TELEGRAM_ADMIN_ID` | — | Ваш ID для алертов об ошибках |
+| `SEND_STARTUP_TO_CHANNEL` | `false` | Отправлять startup/restart уведомления в канал; по умолчанию только admin |
 | `OKX_API_KEY` | — | Ключ OKX API |
 | `OKX_API_SECRET` | — | Секрет OKX API |
 | `OKX_API_PASSPHRASE` | — | Пароль OKX API |
@@ -253,3 +254,4 @@ SQLite хранит progress сделки: `tp1_hit_at`, `tp2_hit_at`, `tp3_hit_
 | `QUALITY_MODE` | `high` | `low`, `normal`, `high` |
 | `AUTO_OPTIMIZE` | `false` | Флаг для будущей авто-оптимизации |
 | `DEFENSIVE_MODE_DRAWDOWN` | `5` | Пауза/defensive mode при просадке хуже -5% |
+| `SEND_STARTUP_TO_CHANNEL` | `false` | Если `true`, startup/restart уведомление дополнительно уйдет в канал; по умолчанию канал не засоряется |

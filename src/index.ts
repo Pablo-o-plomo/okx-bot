@@ -19,6 +19,7 @@ import { generateMarketSummary } from './reports/marketSummary';
 import { generateErrorAnalysis } from './reports/errorAnalysis';
 import { generateHeartbeatReport } from './reports/heartbeat';
 import { logger } from './utils/logger';
+import { BUILD_VERSION } from './version';
 import { recordSignalAccepted, recordSignalScanned } from './utils/runtimeMetrics';
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
@@ -46,15 +47,16 @@ async function bootstrap(): Promise<void> {
   // 4. Start schedulers
   setupSchedulers();
 
-  await broadcastMessage(`
-🤖 <b>OKX Trading Bot запущен</b>
+  const startupMessage = `✅ Bot restarted
+Mode: ${config.trading.isLive ? 'LIVE' : 'PAPER'}
+Build: ${BUILD_VERSION}`;
+  await sendAdminMessage(startupMessage).catch((err: any) => {
+    logger.warn(`Failed to send admin startup notification: ${err.message}`);
+  });
 
-Режим: <b>${config.trading.isLive ? '🔴 LIVE TRADING' : '📄 PAPER TRADING'}</b>
-Символы: ${config.trading.symbols.join(', ')}
-Тайм-фреймы: ${config.trading.timeframes.join(', ')}
-
-Бот начинает анализ рынка...
-  `.trim());
+  if (config.telegram.sendStartupToChannel) {
+    await broadcastMessage(startupMessage);
+  }
 
   logger.info('✅ Bot fully initialized');
 }

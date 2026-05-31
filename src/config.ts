@@ -26,6 +26,7 @@ export const config = {
     botToken: requireEnv('TELEGRAM_BOT_TOKEN'),
     chatId: requireEnv('TELEGRAM_CHAT_ID'),
     adminId: optionalEnv('TELEGRAM_ADMIN_ID', ''),
+    sendStartupToChannel: optionalEnv('SEND_STARTUP_TO_CHANNEL', 'false') === 'true',
   },
 
   okx: {
