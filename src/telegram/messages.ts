@@ -224,7 +224,7 @@ export function formatDailyReport(
     return `• ${t.symbol} ${t.direction}: ${formatPercent(pnlPercent)} | ${pnlUsdt >= 0 ? '+' : ''}${pnlUsdt.toFixed(2)} USDT`;
   }).join('\n');
 
-  return `
+export function formatDailyReport(date: string, trades: Trade[], balance: number, startBalance: number): string { const closed = trades.filter(t => t.status !== 'open'); const wins = closed.filter(t => t.result === 'win'); const losses = closed.filter(t => t.result === 'loss'); const totalPnl = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0); const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0; return `
 📋 <b>Дневной отчет — ${date}</b>
 
 💰 Баланс: <b>${balance.toFixed(2)} USDT</b> (${totalPnlUsdt >= 0 ? '+' : ''}${totalPnlUsdt.toFixed(2)} USDT)
