@@ -112,11 +112,20 @@ src/
 | Команда | Описание |
 |---|---|
 | `/start` | Admin control panel с inline-кнопками |
+| `/menu` | Повторно показать admin keyboard |
 | `/balance` | Текущий баланс |
 | `/version` | Показать build version для диагностики Railway deploy |
 | `/signals` | Последние 5 сигналов |
 | `/positions` | Открытые позиции |
 | `/stats` | Статистика сделок |
+| `/winrate` | Winrate по монетам |
+| `/market` | Rule-based market summary |
+| `/rejects` | Статистика reject-фильтров |
+| `/health` | Health/heartbeat и build version |
+| `/filters` | Текущие filter settings |
+| `/closed` | Последние закрытые сделки |
+| `/scan` | Safe stub для ручного scan now |
+| `/logs` | Safe stub для логов |
 | `/pause` | Остановить торговлю |
 | `/resume` | Возобновить |
 | `/mode` | Текущий режим |
@@ -217,6 +226,10 @@ SQLite хранит progress сделки: `tp1_hit_at`, `tp2_hit_at`, `tp3_hit_
 - ⚙️ Режим
 - 🛡 Риски
 - 💓 Health
+- 📜 Последние сделки
+- 📡 Scan now
+- 🧾 Логи
+- 🧠 Версия
 
 Канал получает только сигналы/lifecycle/summary. Admin actions отвечают в личный чат admin.
 

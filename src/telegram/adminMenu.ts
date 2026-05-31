@@ -10,21 +10,22 @@ export const adminCallbacks: Record<string, string> = {
   report: '/report',
   rejects: '/rejects',
   market: '/market',
-  pause: '/pause',
-  resume: '/resume',
+  health: '/health',
   mode: '/mode',
   risk: '/risk',
-  health: '/health',
+  pause: '/pause',
+  resume: '/resume',
+  closed: '/closed',
+  scan: '/scan',
+  logs: '/logs',
+  version: '/version',
 };
 
 type AdminCommandHandler = (chatId: string, command: string) => Promise<void>;
 let adminCommandHandler: AdminCommandHandler | undefined;
 
-function getConfiguredAdminIds(): number[] {
-  return config.telegram.adminId
-    .split(',')
-    .map(id => Number(id.trim()))
-    .filter(id => Number.isFinite(id));
+function getConfiguredAdminId(): number {
+  return Number(config.telegram.adminId);
 }
 
 export function setAdminCommandHandler(handler: AdminCommandHandler): void {
@@ -51,12 +52,20 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
         { text: '💓 Health', callback_data: 'health' },
       ],
       [
+        { text: '⚙️ Режим', callback_data: 'mode' },
+        { text: '🛡 Риски', callback_data: 'risk' },
+      ],
+      [
         { text: '⏸ Пауза', callback_data: 'pause' },
         { text: '▶️ Resume', callback_data: 'resume' },
       ],
       [
-        { text: '⚙️ Режим', callback_data: 'mode' },
-        { text: '🛡 Риски', callback_data: 'risk' },
+        { text: '📜 Последние сделки', callback_data: 'closed' },
+        { text: '📡 Scan now', callback_data: 'scan' },
+      ],
+      [
+        { text: '🧾 Логи', callback_data: 'logs' },
+        { text: '🧠 Версия', callback_data: 'version' },
       ],
     ],
   };
@@ -71,28 +80,24 @@ export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<v
 export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.CallbackQuery): Promise<boolean> {
   if (!query.data) return false;
 
-  const adminIds = getConfiguredAdminIds();
+  const adminId = getConfiguredAdminId();
   const userId = query.from.id;
-  if (!adminIds.includes(userId)) {
+  const messageChatId = query.message?.chat.id;
+  if (userId !== adminId || messageChatId !== adminId) {
     await bot.answerCallbackQuery(query.id, { text: 'Access denied' });
     return true;
   }
 
   const key = query.data;
   const command = adminCallbacks[key];
-  const targetChatId = query.message?.chat.id.toString() ?? userId.toString();
+  const targetChatId = messageChatId.toString();
 
-  if (!command) {
-    await bot.answerCallbackQuery(query.id, { text: 'Раздел в разработке' });
+  await bot.answerCallbackQuery(query.id, { text: 'OK' });
+  if (!command || !adminCommandHandler) {
     await bot.sendMessage(targetChatId, 'Раздел в разработке');
     return true;
   }
 
-  await bot.answerCallbackQuery(query.id);
-  if (adminCommandHandler) {
-    await adminCommandHandler(targetChatId, command);
-  } else {
-    await bot.sendMessage(targetChatId, 'Раздел в разработке');
-  }
+  await adminCommandHandler(targetChatId, command);
   return true;
 }

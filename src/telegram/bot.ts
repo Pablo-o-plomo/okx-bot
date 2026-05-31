@@ -82,29 +82,11 @@ function registerAdminTextCommand(command: RegExp, action: string): void {
 
 function registerCommands(): void {
   bot.onText(/^\/start(?:@\w+)?(?:\s|$)/, async (msg) => {
-    const chatId = msg.chat.id.toString();
-    const fromId = msg.from?.id.toString();
-    logger.info(`START command from chat=${chatId}, from=${fromId ?? 'unknown'}, admin=${config.telegram.adminId}`);
-
-    if (isAdminMessage(chatId, fromId)) {
-      await bot.sendMessage(chatId, `🤖 OKX Bot Control Panel
-
-Build:
-${BUILD_VERSION}`, {
-        reply_markup: getAdminKeyboard(),
-      });
-      return;
-    }
-
-    await bot.sendMessage(chatId, `🤖 OKX Trading Bot
-
-Build:
-${BUILD_VERSION}`);
+    await handleStart(msg.chat.id.toString(), msg.from?.id.toString());
   });
 
-  bot.onText(/\/version/, async (msg) => {
-    await bot.sendMessage(msg.chat.id.toString(), `🧠 Current build:
-${BUILD_VERSION}`);
+  bot.onText(/\/menu/, async (msg) => {
+    await handleStart(msg.chat.id.toString(), msg.from?.id.toString());
   });
 
   bot.onText(/\/balance/, async (msg) => {
@@ -172,17 +154,21 @@ ${BUILD_VERSION}`);
   registerAdminTextCommand(/\/risk/, '/risk');
   registerAdminTextCommand(/\/health/, '/health');
   registerAdminTextCommand(/\/filters/, '/filters');
+  registerAdminTextCommand(/\/closed/, '/closed');
+  registerAdminTextCommand(/\/scan/, '/scan');
+  registerAdminTextCommand(/\/logs/, '/logs');
+  registerAdminTextCommand(/\/version/, '/version');
 
   bot.on('callback_query', async (query) => {
-    logger.info(`CALLBACK: ${query.data ?? 'empty'}`);
+    logger.info(`CALLBACK: ${query.data ?? 'empty'} from=${query.from.id}`);
     try {
       await handleAdminCallback(bot, query);
     } catch (err: any) {
       logger.error(`Callback handler error: ${err.message}`);
       await bot.answerCallbackQuery(query.id, { text: 'Callback handler error' }).catch(() => undefined);
-      const targetChatId = query.message?.chat.id.toString() ?? config.telegram.adminId;
-      if (targetChatId) {
-        await bot.sendMessage(targetChatId, 'Callback handler error').catch(() => undefined);
+      const adminTarget = config.telegram.adminId;
+      if (adminTarget) {
+        await bot.sendMessage(adminTarget, 'Callback handler error').catch(() => undefined);
       }
     }
   });
@@ -190,6 +176,20 @@ ${BUILD_VERSION}`);
   bot.on('polling_error', (err) => {
     logger.error(`Telegram polling error: ${err.message}`);
   });
+}
+
+async function handleStart(chatId: string, fromId?: string): Promise<void> {
+  logger.info(`START: chat=${chatId}, from=${fromId ?? 'unknown'}, admin=${config.telegram.adminId}`);
+
+  if (isAdminMessage(chatId, fromId)) {
+    await bot.sendMessage(chatId, `🤖 OKX Bot Control Panel
+Build: ${BUILD_VERSION}`, {
+      reply_markup: getAdminKeyboard(),
+    });
+    return;
+  }
+
+  await bot.sendMessage(chatId, 'Бот работает. Панель управления доступна только администратору.');
 }
 
 async function handleAdminCommand(chatId: string, command: string): Promise<void> {
@@ -206,6 +206,10 @@ async function handleAdminCommand(chatId: string, command: string): Promise<void
   if (command === '/risk') return handleRisk(chatId);
   if (command === '/health') return handleHealth(chatId);
   if (command === '/filters') return handleFilters(chatId);
+  if (command === '/closed') return handleClosed(chatId);
+  if (command === '/scan') return handleScan(chatId);
+  if (command === '/logs') return handleLogs(chatId);
+  if (command === '/version') return handleVersion(chatId);
   return send(chatId, 'Раздел в разработке');
 }
 
@@ -278,6 +282,32 @@ MIN_VOLUME_MULTIPLIER=${config.trading.minVolumeMultiplier}
 QUALITY_MODE=${config.trading.qualityMode}`);
 }
 
+async function handleClosed(chatId: string): Promise<void> {
+  const trades = getLastNTrades(10);
+  if (!trades.length) {
+    await send(chatId, '📭 Закрытых сделок пока нет.');
+    return;
+  }
+  const text = trades.map(t => {
+    const pnl = resolveTradePnlPercent(t);
+    return `• #${t.id} ${t.symbol} ${t.direction} ${formatPercent(pnl)} | ${t.status}`;
+  }).join('\n');
+  await send(chatId, `📜 <b>Последние сделки</b>
+${text}`);
+}
+
+async function handleScan(chatId: string): Promise<void> {
+  await send(chatId, '📡 Scan now: раздел в разработке. Планировщик продолжает сканировать рынок автоматически.');
+}
+
+async function handleLogs(chatId: string): Promise<void> {
+  await send(chatId, '🧾 Логи: раздел в разработке. Смотрите Railway logs для runtime diagnostics.');
+}
+
+async function handleVersion(chatId: string): Promise<void> {
+  await send(chatId, `🧠 Current build:
+${BUILD_VERSION}`);
+}
 
 async function handleTrade(chatId: string, tradeId: number): Promise<void> {
   const trade = getTradeById(tradeId);
