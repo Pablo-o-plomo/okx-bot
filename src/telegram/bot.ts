@@ -30,6 +30,7 @@ import { generateRejectStats } from '../reports/rejectStats';
 import { generateHeartbeatReport } from '../reports/heartbeat';
 import { getAdminKeyboard, handleAdminCallback, setAdminCommandHandler } from './adminMenu';
 import { formatPercent, formatPrice } from '../utils/formatPrice';
+import { BUILD_VERSION } from '../version';
 import type { Signal, Trade } from '../database/models';
 
 let bot: TelegramBot;
@@ -45,6 +46,7 @@ export function initTelegramBot(): TelegramBot {
   setAdminCommandHandler(handleAdminCommand);
   registerCommands();
   logger.info('🤖 Telegram bot started');
+  logger.info(`BUILD VERSION: ${BUILD_VERSION}`);
 
   return bot;
 }
@@ -85,13 +87,24 @@ function registerCommands(): void {
     logger.info(`START command from chat=${chatId}, from=${fromId ?? 'unknown'}, admin=${config.telegram.adminId}`);
 
     if (isAdminMessage(chatId, fromId)) {
-      await bot.sendMessage(chatId, '🤖 OKX Bot Control Panel', {
+      await bot.sendMessage(chatId, `🤖 OKX Bot Control Panel
+
+Build:
+${BUILD_VERSION}`, {
         reply_markup: getAdminKeyboard(),
       });
       return;
     }
 
-    await bot.sendMessage(chatId, 'Бот работает. Доступ к панели только у администратора.');
+    await bot.sendMessage(chatId, `🤖 OKX Trading Bot
+
+Build:
+${BUILD_VERSION}`);
+  });
+
+  bot.onText(/\/version/, async (msg) => {
+    await bot.sendMessage(msg.chat.id.toString(), `🧠 Current build:
+${BUILD_VERSION}`);
   });
 
   bot.onText(/\/balance/, async (msg) => {
@@ -161,7 +174,17 @@ function registerCommands(): void {
   registerAdminTextCommand(/\/filters/, '/filters');
 
   bot.on('callback_query', async (query) => {
-    await handleAdminCallback(bot, query);
+    logger.info(`CALLBACK: ${query.data ?? 'empty'}`);
+    try {
+      await handleAdminCallback(bot, query);
+    } catch (err: any) {
+      logger.error(`Callback handler error: ${err.message}`);
+      await bot.answerCallbackQuery(query.id, { text: 'Callback handler error' }).catch(() => undefined);
+      const targetChatId = query.message?.chat.id.toString() ?? config.telegram.adminId;
+      if (targetChatId) {
+        await bot.sendMessage(targetChatId, 'Callback handler error').catch(() => undefined);
+      }
+    }
   });
 
   bot.on('polling_error', (err) => {
@@ -243,7 +266,7 @@ async function handleRisk(chatId: string): Promise<void> {
 }
 
 async function handleHealth(chatId: string): Promise<void> {
-  await send(chatId, generateHeartbeatReport());
+  await send(chatId, `🟢 Bot online\nBuild: ${BUILD_VERSION}\n\n${generateHeartbeatReport()}`);
 }
 
 async function handleFilters(chatId: string): Promise<void> {

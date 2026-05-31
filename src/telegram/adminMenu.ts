@@ -1,5 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { config } from '../config';
+import { BUILD_VERSION } from '../version';
 
 export const adminCallbacks: Record<string, string> = {
   stats: '/stats',
@@ -62,7 +63,7 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
 }
 
 export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<void> {
-  await bot.sendMessage(chatId, '🤖 OKX Bot Control Panel', {
+  await bot.sendMessage(chatId, `🤖 OKX Bot Control Panel\n\nBuild:\n${BUILD_VERSION}`, {
     reply_markup: getAdminKeyboard(),
   });
 }
