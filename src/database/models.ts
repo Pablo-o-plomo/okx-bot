@@ -58,6 +58,9 @@ export type TradeLifecycleStatus =
   | 'tp3_hit'
   | 'breakeven'
   | 'partially_closed'
+  | 'partial_take_profit_hit'
+  | 'breakeven_activated'
+  | 'trailing_stop_active'
   | 'closed_win'
   | 'closed_loss'
   | 'closed_breakeven'
@@ -72,6 +75,7 @@ export interface TradeProgress {
   tp3: boolean;
   breakeven: boolean;
   partiallyClosed: boolean;
+  trailingStopActive?: boolean;
 }
 
 export interface Trade {
@@ -105,6 +109,7 @@ export interface Trade {
   tp2HitAt?: string;
   tp3HitAt?: string;
   breakevenMovedAt?: string;
+  trailingStopActivatedAt?: string;
   openedAt?: string;
   closedAt?: string;
 }

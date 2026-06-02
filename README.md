@@ -6,8 +6,8 @@ Telegram-бот для анализа и сопровождения сделок
 
 ## Что умеет бот
 
-- Telegram Bot API и inline-кнопки в личном чате администратора.
-- Дневник сделок и сопровождение открытых позиций.
+- Telegram Bot API и компактный UI в стиле AI trading terminal / mini Bloomberg.
+- Дневник сделок, портфельные карточки, market scanner и PNG-графики через QuickChart.
 - Расчет суммы позиции, риска в рублях и процентах от депозита.
 - Расчет потенциальной прибыли, risk/reward, комиссий БКС и итогового P&L.
 - Дневные и месячные отчеты: депозит, позиции, закрытые сделки, комиссии, winrate, лучшие/худшие сделки.
@@ -33,7 +33,11 @@ BROKER=BCS
 DEFAULT_DEPOSIT_RUB=1000000
 DEFAULT_RISK_PER_TRADE=1
 OPENAI_API_KEY=
+ENABLE_TRAILING_STOP=true
+ALLOWED_SYMBOLS=SBER,GAZP,LKOH,IMOEX,Si,BR,GOLD
 ```
+
+`ENABLE_TRAILING_STOP=true` оставляет сделку открытой после TP3 и активирует trailing stop; при `false` позиция закрывается на TP3.
 
 Совместимость: если уже заданы старые `TELEGRAM_BOT_TOKEN` и `TELEGRAM_ADMIN_ID`, бот тоже их прочитает. Для новой BCS-версии рекомендуется использовать `BOT_TOKEN` и `ADMIN_ID`.
 
@@ -49,22 +53,41 @@ OPENAI_API_KEY=
    - `BROKER=BCS`
    - `DEFAULT_DEPOSIT_RUB`
    - `DEFAULT_RISK_PER_TRADE`
+   - `ALLOWED_SYMBOLS` — список для market scanner, например `SBER,GAZP,LKOH,IMOEX,Si,BR,GOLD`
 5. Команда сборки: `npm run build`.
 6. Команда запуска: `npm start`.
+
+
+## Terminal UI / Charts
+
+Главное меню оформлено как компактный trading terminal:
+
+- 💼 Портфель
+- 📡 Рынок
+- 🧠 AI Анализ
+- ⚠️ Риск
+- 📋 Отчеты
+- ⚙️ Настройки
+
+Бот отправляет PNG-графики прямо в Telegram через QuickChart URL:
+
+- P&L chart;
+- equity curve;
+- market heatmap;
+- mini candles;
+- AI dashboard card.
+
+Для списка инструментов market scanner используйте `ALLOWED_SYMBOLS` или старый `SYMBOLS`.
 
 ## Главное меню
 
 Команда `/start` открывает inline-menu:
 
-- 📊 Портфель
-- 📝 Добавить сделку
-- 📈 Анализ инструмента
-- 🧠 AI-разбор
-- ⚠️ Риск-менеджмент
-- 💰 Комиссии БКС
-- 📋 Дневник сделок
-- 📅 Отчет за день
-- 📆 Отчет за месяц
+- 💼 Портфель
+- 📡 Рынок
+- 🧠 AI Анализ
+- ⚠️ Риск
+- 📋 Отчеты
 - ⚙️ Настройки
 
 Кнопки работают только для `ADMIN_ID`. Канал для сигналов этой версии не используется: бот — аналитический помощник и дневник сделок.
@@ -75,11 +98,13 @@ OPENAI_API_KEY=
 |---|---|
 | `/start` | Открыть главное меню |
 | `/menu` | Повторно показать кнопки |
-| `/portfolio` | Портфель и открытые позиции |
+| `/portfolio` | Портфель, equity curve и P&L chart |
+| `/market`, `/scan`, `/scanner` | AI market scanner, heatmap, mini candles и AI dashboard card |
 | `/add` | Добавить сделку пошагово |
 | `/diary` | Дневник открытых и закрытых сделок |
 | `/daily` | Отчет за день |
 | `/month` | Отчет за месяц |
+| `/reports` | Компактный daily + monthly report |
 | `/fees` | Комиссии БКС и текущие настройки |
 | `/risk` | Правила риск-менеджмента |
 | `/settings` | Текущие настройки бота |

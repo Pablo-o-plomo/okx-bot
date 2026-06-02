@@ -130,10 +130,11 @@ function runSafeMigrations(): void {
   addColumnIfMissing('trades', 'tp2_hit_at', 'TEXT');
   addColumnIfMissing('trades', 'tp3_hit_at', 'TEXT');
   addColumnIfMissing('trades', 'breakeven_moved_at', 'TEXT');
+  addColumnIfMissing('trades', 'trailing_stop_activated_at', 'TEXT');
   addColumnIfMissing('trades', 'close_reason', 'TEXT');
   addColumnIfMissing('trades', 'final_pnl', 'REAL');
   addColumnIfMissing('trades', 'current_pnl', 'REAL DEFAULT 0');
-  addColumnIfMissing('trades', 'progress_json', `TEXT DEFAULT '{"tp1":false,"tp2":false,"tp3":false,"breakeven":false,"partiallyClosed":false}'`);
+  addColumnIfMissing('trades', 'progress_json', `TEXT DEFAULT '{"tp1":false,"tp2":false,"tp3":false,"breakeven":false,"partiallyClosed":false,"trailingStopActive":false}'`);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS reject_events (
@@ -215,7 +216,7 @@ export function saveTrade(trade: Trade): number {
     trade.positionSize, trade.leverage, trade.status,
     JSON.stringify(trade.entryReasons),
     trade.indicatorsAtEntry ? JSON.stringify(trade.indicatorsAtEntry) : null,
-    JSON.stringify(trade.progress || { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false }),
+    JSON.stringify(trade.progress || { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false, trailingStopActive: false }),
   );
   return result.lastInsertRowid as number;
 }
@@ -247,12 +248,12 @@ export function closeTrade(
 }
 
 export function getOpenTrades(): Trade[] {
-  const rows = db.prepare("SELECT * FROM trades WHERE status IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed')").all() as any[];
+  const rows = db.prepare("SELECT * FROM trades WHERE status IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed','partial_take_profit_hit','breakeven_activated','trailing_stop_active')").all() as any[];
   return rows.map(rowToTrade);
 }
 
 export function getOpenTradeBySymbol(symbol: string): Trade | null {
-  const row = db.prepare("SELECT * FROM trades WHERE symbol = ? AND status IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed')").get(symbol) as any;
+  const row = db.prepare("SELECT * FROM trades WHERE symbol = ? AND status IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed','partial_take_profit_hit','breakeven_activated','trailing_stop_active')").get(symbol) as any;
   return row ? rowToTrade(row) : null;
 }
 
@@ -262,14 +263,14 @@ export function getTradeById(id: number): Trade | null {
 }
 
 export function getLastNTrades(n: number): Trade[] {
-  const rows = db.prepare("SELECT * FROM trades WHERE status NOT IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed') ORDER BY closed_at DESC LIMIT ?").all(n) as any[];
+  const rows = db.prepare("SELECT * FROM trades WHERE status NOT IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed','partial_take_profit_hit','breakeven_activated','trailing_stop_active') ORDER BY closed_at DESC LIMIT ?").all(n) as any[];
   return rows.map(rowToTrade);
 }
 
 export function getTodayTrades(): Trade[] {
   const rows = db.prepare(`
     SELECT * FROM trades 
-    WHERE DATE(opened_at) = DATE('now') AND status NOT IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed')
+    WHERE DATE(opened_at) = DATE('now') AND status NOT IN ('open','tp1_hit','tp2_hit','breakeven','partially_closed','partial_take_profit_hit','breakeven_activated','trailing_stop_active')
   `).all() as any[];
   return rows.map(rowToTrade);
 }
@@ -301,11 +302,12 @@ function rowToTrade(row: any): Trade {
     improvements: row.improvements ? JSON.parse(row.improvements) : undefined,
     errorTags: row.error_tags ? JSON.parse(row.error_tags) : undefined,
     indicatorsAtEntry: row.indicators_at_entry ? JSON.parse(row.indicators_at_entry) : undefined,
-    progress: row.progress_json ? JSON.parse(row.progress_json) : { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false },
+    progress: row.progress_json ? JSON.parse(row.progress_json) : { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false, trailingStopActive: false },
     tp1HitAt: row.tp1_hit_at ?? undefined,
     tp2HitAt: row.tp2_hit_at ?? undefined,
     tp3HitAt: row.tp3_hit_at ?? undefined,
     breakevenMovedAt: row.breakeven_moved_at ?? undefined,
+    trailingStopActivatedAt: row.trailing_stop_activated_at ?? undefined,
     openedAt: row.opened_at,
     closedAt: row.closed_at ?? undefined,
   };
@@ -367,26 +369,29 @@ export function updateBotState(partial: Partial<BotState>): void {
 
 export function updateTradeLifecycle(
   id: number,
-  patch: { status?: string; currentPnl?: number; progress?: unknown; tp1HitAt?: string; tp2HitAt?: string; tp3HitAt?: string; breakevenMovedAt?: string },
+  patch: { status?: string; currentPnl?: number; stopLoss?: number; progress?: unknown; tp1HitAt?: string; tp2HitAt?: string; tp3HitAt?: string; breakevenMovedAt?: string; trailingStopActivatedAt?: string },
 ): void {
   const trade = getTradeById(id);
   if (!trade) return;
   db.prepare(`
     UPDATE trades SET
-      status = ?, current_pnl = ?, progress_json = ?,
+      status = ?, current_pnl = ?, stop_loss = ?, progress_json = ?,
       tp1_hit_at = COALESCE(?, tp1_hit_at),
       tp2_hit_at = COALESCE(?, tp2_hit_at),
       tp3_hit_at = COALESCE(?, tp3_hit_at),
-      breakeven_moved_at = COALESCE(?, breakeven_moved_at)
+      breakeven_moved_at = COALESCE(?, breakeven_moved_at),
+      trailing_stop_activated_at = COALESCE(?, trailing_stop_activated_at)
     WHERE id = ?
   `).run(
     patch.status ?? trade.status,
     patch.currentPnl ?? trade.currentPnl ?? 0,
-    JSON.stringify(patch.progress ?? trade.progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false }),
+    patch.stopLoss ?? trade.stopLoss,
+    JSON.stringify(patch.progress ?? trade.progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false, trailingStopActive: false }),
     patch.tp1HitAt ?? null,
     patch.tp2HitAt ?? null,
     patch.tp3HitAt ?? null,
     patch.breakevenMovedAt ?? null,
+    patch.trailingStopActivatedAt ?? null,
     id,
   );
 }
@@ -439,7 +444,7 @@ export function getWinrateBySymbol(): Array<{ symbol: string; winrate: number; t
       SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
       AVG(COALESCE(pnl_percent, 0)) AS avg_pnl
     FROM trades
-    WHERE status NOT IN ('open', 'tp1_hit', 'tp2_hit', 'breakeven', 'partially_closed')
+    WHERE status NOT IN ('open', 'tp1_hit', 'tp2_hit', 'breakeven', 'partially_closed', 'partial_take_profit_hit', 'breakeven_activated', 'trailing_stop_active')
     GROUP BY symbol
     HAVING COUNT(*) > 0
     ORDER BY (SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) DESC

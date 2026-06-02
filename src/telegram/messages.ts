@@ -17,13 +17,14 @@ function bullets(items: string[]): string {
 }
 
 function progressLines(progress?: TradeProgress): string {
-  const p = progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false };
+  const p = progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false, trailingStopActive: false };
   return [
     `TP1 ${p.tp1 ? '✅' : '⏳'}`,
     `TP2 ${p.tp2 ? '✅' : '⏳'}`,
-    `TP3 ${p.tp3 ? '✅' : '⏳'}`,
-    ...(p.breakeven ? ['BE ✅'] : []),
-  ].join('\n');
+    `TP3 ${p.tp3 ? '✅' : '❌'}`,
+    ...(p.breakeven ? ['BE 🔒'] : []),
+    ...(p.trailingStopActive ? ['Trail 📈'] : []),
+  ].join(' · ');
 }
 
 function volumeLabel(ratio: number, state?: string): string {
@@ -44,84 +45,51 @@ function signalTone(signal: Signal): string {
 }
 
 export function formatSignalMessage(signal: Signal): string {
-  const signalStatus = config.trading.isLive ? '🔴 РЕАЛЬНЫЙ СИГНАЛ' : '🟡 БУМАЖНЫЙ СИГНАЛ';
+  const mode = config.trading.isLive ? '🔴 LIVE' : '🟡 PAPER';
   const tvLink = formatTradingViewLink(signal.symbol);
   const summary = signal.indicatorSummary;
   const warnings = [...(signal.warnings ?? [])];
-  const humanComment = warnings.some(w => w.toLowerCase().includes('объем'))
-    ? getWeakSignalComment(signal.entryPrice)
-    : getOpenComment(signal.entryPrice);
+  const trendIcon = summary.macd === 'bullish' ? '🟢' : summary.macd === 'bearish' ? '🔴' : '⚪';
 
-  return `
-<b>${signalStatus}</b>
+  return `🧠 <b>AI SIGNAL · ${mode}</b>
 
-🚨 <b>${signal.symbol}</b> | ${formatDirection(signal.direction)}
-⏱ ${signal.timeframeConfirmations.join(' / ')}
+${trendIcon} <b>${signal.symbol}</b> · ${formatDirection(signal.direction)}
+💵 Entry <b>${formatPrice(signal.symbol, signal.entryPrice)}</b>
+🛑 SL <b>${formatPrice(signal.symbol, signal.stopLoss)}</b>
+🎯 TP1 ${formatPrice(signal.symbol, signal.takeProfit1)} · TP2 ${formatPrice(signal.symbol, signal.takeProfit2)} · TP3 ${formatPrice(signal.symbol, signal.takeProfit3)}
 
-💵 Вход: <b>${formatPrice(signal.symbol, signal.entryPrice)}</b>
-🛑 Стоп: <b>${formatPrice(signal.symbol, signal.stopLoss)}</b>
+📐 R/R <b>1:${signal.riskReward.toFixed(1)}</b> · 🧠 Confidence <b>${signal.confidence}/10</b>
+📊 EMA ${formatPrice(signal.symbol, summary.ema20)} / ${formatPrice(signal.symbol, summary.ema50)} / ${formatPrice(signal.symbol, summary.ema200)}
+📈 RSI <b>${summary.rsi.toFixed(1)}</b> · MACD <b>${summary.macd}</b> · ATR <b>${formatUnsignedPercent(summary.atrPercent)}</b>
+🔊 Volume <b>${volumeLabel(summary.volumeRatio, summary.volumeState)}</b>
 
-🎯 TP1: <b>${formatPrice(signal.symbol, signal.takeProfit1)}</b>
-🎯 TP2: <b>${formatPrice(signal.symbol, signal.takeProfit2)}</b>
-🎯 TP3: <b>${formatPrice(signal.symbol, signal.takeProfit3)}</b>
+✅ ${signal.reasons.slice(0, 3).join(' · ') || 'сигнал сформирован'}
+${warnings.length ? `⚠️ ${warnings.slice(0, 2).join(' · ')}
+` : ''}${signalTone(signal)}
 
-📐 Риск/прибыль: <b>1:${signal.riskReward.toFixed(1)}</b>
-🧠 Уверенность: <b>${signal.confidence}/10</b>
-
-📊 <b>EMA:</b>
-20 → ${formatPrice(signal.symbol, summary.ema20)}
-50 → ${formatPrice(signal.symbol, summary.ema50)}
-200 → ${formatPrice(signal.symbol, summary.ema200)}
-
-📈 RSI: <b>${summary.rsi.toFixed(1)}</b>
-📉 MACD: <b>${summary.macd === 'bullish' ? 'бычий' : summary.macd === 'bearish' ? 'медвежий' : 'нейтральный'}</b>
-🌊 ATR: <b>${formatUnsignedPercent(summary.atrPercent)}</b>
-🔊 Объем: <b>${volumeLabel(summary.volumeRatio, summary.volumeState)}</b>
-
-✅ <b>Причины:</b>
-${bullets(signal.reasons)}
-
-${warnings.length ? `⚠️ <b>Предупреждения:</b>\n${bullets(warnings)}\n\n` : ''}${signalTone(signal)}
-
-🗣 <i>${humanComment}</i>
-
-📉 <a href="${tvLink}">Открыть график TradingView</a>
-
-⚠️ <i>Не является финансовой рекомендацией.</i>
-`.trim();
+📉 <a href="${tvLink}">TradingView</a>
+⚠️ Не является инвестиционной рекомендацией.`;
 }
 
 export function formatTradeOpenedMessage(trade: Trade, signal: Signal): string {
-  const status = config.trading.isLive ? '🔴 РЕАЛЬНАЯ СДЕЛКА ОТКРЫТА' : '🟡 БУМАЖНАЯ СДЕЛКА ОТКРЫТА';
-  return `
-<b>${status}</b>
-🆔 #${trade.id ?? signal.id ?? 'новая'}
+  const status = config.trading.isLive ? '🔴 LIVE TRADE' : '🟡 PAPER TRADE';
+  return `🚀 <b>${status}</b>
+🆔 #${trade.id ?? signal.id ?? 'новая'} · <b>${trade.symbol}</b> ${formatDirection(trade.direction)}
 
-🚨 <b>${trade.symbol}</b> | ${formatDirection(trade.direction)}
+💵 Entry <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
+🛑 SL <b>${formatPrice(trade.symbol, trade.stopLoss)}</b>
+🎯 TP1 ${formatPrice(trade.symbol, trade.takeProfit1)} · TP2 ${formatPrice(trade.symbol, trade.takeProfit2)} · TP3 ${formatPrice(trade.symbol, trade.takeProfit3)}
 
-💵 Вход: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
-🛑 Стоп: <b>${formatPrice(trade.symbol, trade.stopLoss)}</b>
+📊 ${progressLines(trade.progress)}
+📐 R/R <b>1:${signal.riskReward.toFixed(1)}</b> · 🧠 ${signal.confidence}/10
 
-🎯 TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>
-🎯 TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>
-🎯 TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>
-
-📌 Статус: <b>ОТКРЫТА</b>
-
-📊 <b>Прогресс:</b>
-${progressLines(trade.progress)}
-
-📐 Риск/прибыль: <b>1:${signal.riskReward.toFixed(1)}</b>
-🧠 Уверенность: <b>${signal.confidence}/10</b>
-
-🗣 <i>${getOpenComment(trade.id ?? signal.entryPrice)}</i>
-`.trim();
+🗣 <i>${getOpenComment(trade.id ?? signal.entryPrice)}</i>`;
 }
 
 export function sendTradeUpdate(trade: Trade, tpLevel: number, currentPrice: number): string {
   const pnl = calculatePnlPercent(trade, currentPrice);
   const pnlUsdt = (pnl / 100) * trade.positionSize * trade.entryPrice;
-  const progress = trade.progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false };
+  const progress = trade.progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false, trailingStopActive: false };
   const updatedProgress = {
     ...progress,
     tp1: progress.tp1 || tpLevel >= 1,
@@ -129,14 +97,23 @@ export function sendTradeUpdate(trade: Trade, tpLevel: number, currentPrice: num
     tp3: progress.tp3 || tpLevel >= 3,
     breakeven: true,
     partiallyClosed: tpLevel < 3,
+    trailingStopActive: progress.trailingStopActive || (tpLevel >= 3 && trade.status === 'trailing_stop_active'),
   };
 
+  const slUpdateLine = tpLevel === 1
+    ? '🔒 SL moved to breakeven\n'
+    : tpLevel === 2
+      ? '🔒 SL moved to TP1\n'
+      : updatedProgress.trailingStopActive
+        ? '📈 Trailing stop activated\n'
+        : '';
+
   return `
-🎯 <b>TP${tpLevel} ДОСТИГНУТ</b>
+🎯 <b>TP${tpLevel} HIT</b>
 🆔 #${trade.id ?? 'нет данных'}
 
 ✅ TP${tpLevel} достигнут
-${tpLevel === 1 ? '🛡 Стоп перенесен в безубыток\n' : ''}📌 Статус: <b>${tpLevel >= 3 ? 'ЗАКРЫВАЕТСЯ' : 'ЧАСТИЧНО ЗАКРЫТА'}</b>
+${slUpdateLine}📌 Статус: <b>${updatedProgress.trailingStopActive ? 'TRAILING STOP АКТИВЕН' : tpLevel >= 3 ? 'ЗАКРЫВАЕТСЯ' : 'ЧАСТИЧНО ЗАКРЫТА'}</b>
 
 📊 <b>Прогресс:</b>
 ${progressLines(updatedProgress)}
