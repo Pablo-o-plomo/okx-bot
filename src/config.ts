@@ -65,7 +65,7 @@ export const config = {
 
   trading: {
     isLive: false,
-    symbols: optionalEnv('SYMBOLS', 'SBER,GAZP,LKOH,IMOEX,Si,BR,GOLD').split(',').map(s => s.trim()),
+    symbols: optionalEnv('ALLOWED_SYMBOLS', optionalEnv('SYMBOLS', 'SBER,GAZP,LKOH,IMOEX,Si,BR,GOLD')).split(',').map(s => s.trim()).filter(Boolean),
     timeframes: optionalEnv('TIMEFRAMES', '1D,1W').split(',').map(s => s.trim()),
     riskPerTrade: parseFloat(optionalEnv('DEFAULT_RISK_PER_TRADE', '1')),
     maxDailyLoss: parseFloat(optionalEnv('MAX_DAILY_LOSS', '3')),
@@ -73,6 +73,7 @@ export const config = {
     maxLossesInRow: parseInt(optionalEnv('MAX_LOSSES_IN_ROW', '3')),
     minSignalConfidence: parseInt(optionalEnv('MIN_SIGNAL_CONFIDENCE', '7')),
     autoOptimize: optionalEnv('AUTO_OPTIMIZE', 'false') === 'true',
+    enableTrailingStop: optionalEnv('ENABLE_TRAILING_STOP', 'false') === 'true',
     minAtrPercent: parseFloat(optionalEnv('MIN_ATR_PERCENT', '0.2')),
     maxAtrPercent: parseFloat(optionalEnv('MAX_ATR_PERCENT', '3')),
     defensiveModeDrawdown: parseFloat(optionalEnv('DEFENSIVE_MODE_DRAWDOWN', '5')),

@@ -60,5 +60,6 @@ export function formatRub(value: number): string {
 }
 
 export function formatTradeLine(trade: BcsTrade): string {
-  return `#${trade.id} ${trade.ticker} ${trade.direction}: ${trade.pnlPercent >= 0 ? '+' : ''}${trade.pnlPercent.toFixed(2)}% | ${formatRub(trade.pnlRub)}`;
+  const icon = trade.pnlRub > 0 ? '🟢' : trade.pnlRub < 0 ? '🔴' : '⚪';
+  return `${icon} #${trade.id} <b>${trade.ticker}</b> ${trade.direction}: ${trade.pnlPercent >= 0 ? '+' : ''}${trade.pnlPercent.toFixed(2)}% · ${formatRub(trade.pnlRub)}`;
 }

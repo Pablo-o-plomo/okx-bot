@@ -47,14 +47,14 @@ export function calculateBcsCommission(input: BcsCommissionInput): BcsCommission
 }
 
 export function formatBcsCommissionSettings(): string {
-  return `💰 <b>Комиссии БКС</b>
+  return `💸 <b>BCS FEES</b>
 
-Обслуживание: ${config.bcs.monthlyServiceFee.toFixed(2)} ₽/мес при наличии операций
-Ценные бумаги: ${config.bcs.securitiesFeePercent}% от оборота
-Валюта: ${config.bcs.currencyFeePercent}% от оборота
-Доп. комиссия покупки USD/EUR/HKD/GBP: ${config.bcs.extraFxBuyFeePercent}%
-Фьючерсы: ${config.bcs.futuresFeeRub.toFixed(2)} ₽ за контракт
-Опционы: не более ${config.bcs.optionsMaxFeePercent}% от объема сделки
+🏦 Service: <b>${config.bcs.monthlyServiceFee.toFixed(0)} ₽/мес</b>
+📈 Stocks/Funds/Bonds: <b>${config.bcs.securitiesFeePercent}%</b>
+💱 FX: <b>${config.bcs.currencyFeePercent}%</b>
+➕ FX buy add-on: <b>${config.bcs.extraFxBuyFeePercent}%</b>
+⚡ Futures: <b>${config.bcs.futuresFeeRub.toFixed(2)} ₽/contract</b>
+🧩 Options cap: <b>${config.bcs.optionsMaxFeePercent}%</b>
 
-Настройки редактируются через ENV.`;
+🧠 AI: комиссии считаются до входа и входят в риск сделки.`;
 }
