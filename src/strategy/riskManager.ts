@@ -22,7 +22,18 @@ export async function checkRisk(signal: Signal): Promise<RiskCheck> {
       return { allowed: false, reason: `Торговля приостановлена до ${state.pausedUntil} (${state.pauseReason})` };
     }
     // Auto-resume after pause period
+    const wasRiskProtectionPause = state.pauseReason?.toLowerCase().includes('убыточ');
     updateBotState({ isPaused: false, pausedUntil: undefined, pauseReason: undefined });
+    if (wasRiskProtectionPause) {
+      broadcastMessage(`🤖🤖🤖
+
+ТОРГОВЛЯ ВОЗОБНОВЛЕНА
+
+📌 Статус: ACTIVE
+🧠 Бот снова анализирует рынок
+
+🛡 Risk Protection OFF`).catch(()=>{});
+    }
   }
 
   // 2. Reset daily loss counter if new day
@@ -135,7 +146,7 @@ export function recordTradeResult(pnlPercent: number): void {
   }
   if ((updates.consecutiveLosses ?? state.consecutiveLosses) >= config.trading.maxLossesInRow) {
     updates.isPaused = true; updates.pausedUntil = new Date(Date.now()+24*60*60*1000).toISOString(); updates.pauseReason = `${config.trading.maxLossesInRow} убыточных подряд`;
-    broadcastMessage(`🛑 <b>Бот поставлен на паузу</b>\nПричина: ${updates.pauseReason}`).catch(()=>{});
+    broadcastMessage(`⛔⛔⛔\n\nТОРГОВЛЯ НА ПАУЗЕ\n\n📌 Причина:\n${config.trading.maxLossesInRow} убыточные сделки подряд\n\n🛡 Risk Protection ACTIVE\n⏳ Новые сделки временно отключены`).catch(()=>{});
   }
   updateBotState(updates);
 }
