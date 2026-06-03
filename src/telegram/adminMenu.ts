@@ -36,46 +36,31 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
   return {
     inline_keyboard: [
       [
-        { text: '📊 Статистика', callback_data: 'stats' },
-        { text: '📂 Позиции', callback_data: 'positions' },
+        { text: '💼 Портфель', callback_data: 'positions' },
+        { text: '📡 Рынок', callback_data: 'scan' },
       ],
       [
-        { text: '📈 Винрейт', callback_data: 'winrate' },
-        { text: '🧠 Анализ', callback_data: 'analyze' },
+        { text: '🧠 AI Анализ', callback_data: 'analyze' },
+        { text: '⚠️ Риск', callback_data: 'risk' },
       ],
       [
-        { text: '📄 Отчет', callback_data: 'report' },
-        { text: '🚫 Отклонения', callback_data: 'rejects' },
-      ],
-      [
-        { text: '🌍 Рынок', callback_data: 'market' },
-        { text: '💓 Здоровье', callback_data: 'health' },
-      ],
-      [
-        { text: '⚙️ Режим', callback_data: 'mode' },
-        { text: '🛡 Риски', callback_data: 'risk' },
-      ],
-      [
-        { text: '⏸ Пауза', callback_data: 'pause' },
-        { text: '▶️ Возобновить', callback_data: 'resume' },
-      ],
-      [
-        { text: '📜 Последние сделки', callback_data: 'closed' },
-        { text: '📡 Сканировать', callback_data: 'scan' },
-      ],
-      [
-        { text: '🧾 Логи', callback_data: 'logs' },
-        { text: '🧠 Версия', callback_data: 'version' },
+        { text: '📋 Отчеты', callback_data: 'report' },
+        { text: '⚙️ Настройки', callback_data: 'mode' },
       ],
     ],
   };
 }
 
+
 export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<void> {
-  await bot.sendMessage(chatId, `🤖 BCS Trading Assistant\n\nСборка:\n${BUILD_VERSION}`, {
+  await bot.sendMessage(chatId, `🖥 BCS ASSISTANT TERMINAL
+
+Build:
+${BUILD_VERSION}`, {
     reply_markup: getAdminKeyboard(),
   });
 }
+
 
 export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.CallbackQuery): Promise<boolean> {
   if (!query.data) return false;
