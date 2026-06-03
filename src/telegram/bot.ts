@@ -34,7 +34,7 @@ export function initTelegramBot(): TelegramBot {
   initBcsDb();
   bot = new TelegramBot(config.telegram.botToken, { polling: true });
   registerCommands();
-  logger.info('🤖 BCS Trading Assistant started');
+  logger.info('🤖 Crypto Trading Bot started');
   logger.info(`BUILD VERSION: ${BUILD_VERSION}`);
   return bot;
 }
@@ -56,9 +56,10 @@ function isAdminMessage(chatId: string | number, fromId?: string | number): bool
 function mainKeyboard(): TelegramBot.InlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      [{ text: '💼 Портфель', callback_data: 'portfolio' }, { text: '📡 Рынок', callback_data: 'market' }],
-      [{ text: '🧠 AI Анализ', callback_data: 'ai_review' }, { text: '⚠️ Риск', callback_data: 'risk' }],
-      [{ text: '📋 Отчеты', callback_data: 'reports' }, { text: '⚙️ Настройки', callback_data: 'settings' }],
+      [{ text: '📊 Анализ рынка', callback_data: 'market' }, { text: '🤖 Статус бота', callback_data: 'settings' }],
+      [{ text: '▶️ Возобновить торговлю', callback_data: 'resume' }, { text: '⏸ Пауза', callback_data: 'pause' }],
+      [{ text: '⚠️ Риск', callback_data: 'risk' }, { text: '📋 Отчеты', callback_data: 'reports' }],
+      [{ text: '⚙️ Настройки', callback_data: 'settings' }],
     ],
   };
 }
@@ -86,12 +87,12 @@ async function handleStart(chatId: number, fromId?: number): Promise<void> {
     return;
   }
   ensureUser(fromId ?? chatId);
-  await send(chatId, `🖥 <b>BCS ASSISTANT TERMINAL</b>
+  await send(chatId, `🤖 <b>CRYPTO TRADING BOT</b>
 
-⚡ AI desk online
+⚡ Trading desk online
 🧠 Build: <code>${BUILD_VERSION}</code>
 
-Выберите модуль:`, { reply_markup: mainKeyboard() });
+Выберите действие:`, { reply_markup: mainKeyboard() });
 }
 
 async function handleMenu(chatId: number, fromId?: number): Promise<void> {
@@ -166,17 +167,16 @@ Manual trading architecture готова: подтверждения досту�
 async function handleAnalyzePrompt(chatId: number): Promise<void> {
   await send(chatId, `${formatMarketSentiment()}
 
-🔎 Тикер: <code>/analyze SBER</code>`, {
+🔎 Пара: <code>/analyze BTC-USDT</code>`, {
     reply_markup: { inline_keyboard: [[{ text: '📡 Сканер рынка', callback_data: 'market' }]] },
   });
 }
 
 async function handleAiPrompt(chatId: number): Promise<void> {
-  await send(chatId, `🧠 <b>AI ANALYSIS HUB</b>
+  await send(chatId, `🧠 <b>AI ANALYSIS</b>
 
 📡 Market scanner: /market
-🔎 Инструмент: <code>/analyze SBER</code>
-🧾 Сделка: <code>/review SBER stock LONG 250 10 240 275 10 комментарий</code>`, {
+🔎 Пара: <code>/analyze BTC-USDT</code>`, {
     reply_markup: { inline_keyboard: [[{ text: '📡 Сканер рынка', callback_data: 'market' }, { text: '📝 Добавить сделку', callback_data: 'add_trade' }]] },
   });
 }
@@ -196,7 +196,7 @@ function isDirection(value: string): value is BcsTradeDirection {
 
 async function startAddTrade(chatId: number): Promise<void> {
   addTradeDrafts.set(chatId, { step: 'ticker', userId: chatId });
-  await send(chatId, '📝 <b>Добавление сделки</b>\n\nВведите тикер, например SBER, GAZP, Si, BR:');
+  await send(chatId, '📝 <b>Добавление сделки</b>\n\nВведите торговую пару, например BTC-USDT, ETH-USDT, SOL-USDT:');
 }
 
 async function handleAddTradeText(chatId: number, text: string): Promise<boolean> {
@@ -359,6 +359,8 @@ async function handleAction(chatId: number, action: string): Promise<void> {
     case 'daily_report': return handleDailyReport(chatId);
     case 'monthly_report': return handleMonthlyReport(chatId);
     case 'settings': return handleSettings(chatId);
+    case 'pause': return send(chatId, '⏸ Пауза: используйте команду администратора /pause.');
+    case 'resume': return send(chatId, '▶️ Возобновление: используйте команду администратора /resume.');
     case 'manual_confirm': return send(chatId, '✅ Сделка подтверждена вручную. Реальные ордера отключены.');
     case 'manual_cancel': return send(chatId, '❌ Сценарий отменен. Ордера не отправлялись.');
     default: return send(chatId, 'Раздел в разработке.');
@@ -383,7 +385,7 @@ async function handleReviewCommand(chatId: number, text: string): Promise<void> 
   const takeProfit = parseNumber(take);
   const commissionRub = parseNumber(commission) ?? 0;
   if ([entryPrice, quantity, stopLoss, takeProfit].some(v => v === undefined)) {
-    await send(chatId, 'Не удалось прочитать числа. Формат: /review SBER stock LONG 250 10 240 275 10 комментарий');
+    await send(chatId, 'Не удалось прочитать числа. Проверьте формат команды /review.');
     return;
   }
   const review = reviewTrade({

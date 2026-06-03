@@ -36,15 +36,18 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
   return {
     inline_keyboard: [
       [
-        { text: '💼 Портфель', callback_data: 'positions' },
-        { text: '📡 Рынок', callback_data: 'scan' },
+        { text: '📊 Анализ рынка', callback_data: 'market' },
+        { text: '🤖 Статус бота', callback_data: 'health' },
       ],
       [
-        { text: '🧠 AI Анализ', callback_data: 'analyze' },
+        { text: '▶️ Возобновить торговлю', callback_data: 'resume' },
+        { text: '⏸ Пауза', callback_data: 'pause' },
+      ],
+      [
         { text: '⚠️ Риск', callback_data: 'risk' },
+        { text: '📋 Отчеты', callback_data: 'report' },
       ],
       [
-        { text: '📋 Отчеты', callback_data: 'report' },
         { text: '⚙️ Настройки', callback_data: 'mode' },
       ],
     ],
@@ -53,7 +56,7 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
 
 
 export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<void> {
-  await bot.sendMessage(chatId, `🖥 BCS ASSISTANT TERMINAL
+  await bot.sendMessage(chatId, `🤖 CRYPTO TRADING BOT
 
 Build:
 ${BUILD_VERSION}`, {

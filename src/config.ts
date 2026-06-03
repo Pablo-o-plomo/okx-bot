@@ -20,8 +20,8 @@ const adminId = optionalEnv('ADMIN_ID', optionalEnv('TELEGRAM_ADMIN_ID', ''));
 
 export const config = {
   app: {
-    name: 'BCS Trading Assistant',
-    broker: optionalEnv('BROKER', 'BCS'),
+    name: 'Crypto Trading Bot',
+    broker: optionalEnv('BROKER', 'OKX'),
   },
 
   telegram: {
@@ -65,7 +65,7 @@ export const config = {
 
   trading: {
     isLive: false,
-    symbols: optionalEnv('ALLOWED_SYMBOLS', optionalEnv('SYMBOLS', 'SBER,GAZP,LKOH,IMOEX,Si,BR,GOLD')).split(',').map(s => s.trim()).filter(Boolean),
+    symbols: optionalEnv('ALLOWED_SYMBOLS', optionalEnv('SYMBOLS', 'BTC-USDT,ETH-USDT,SOL-USDT,XRP-USDT,BNB-USDT')).split(',').map(s => s.trim()).filter(Boolean),
     timeframes: optionalEnv('TIMEFRAMES', '1D,1W').split(',').map(s => s.trim()),
     riskPerTrade: parseFloat(optionalEnv('DEFAULT_RISK_PER_TRADE', '1')),
     maxDailyLoss: parseFloat(optionalEnv('MAX_DAILY_LOSS', '3')),
