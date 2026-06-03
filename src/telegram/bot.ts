@@ -210,8 +210,12 @@ async function sendStatus(chatId: string): Promise<void> {
 
 async function sendBalance(chatId: string): Promise<void> {
   const balance = await getAccountBalance();
-  const state = getBotState();
-  await send(chatId, `💰 <b>Баланс:</b> ${balance.toFixed(2)} USDT\nРежим: ${state.mode.toUpperCase()}`, true);
+  await send(chatId, `
+💰 <b>BALANCE</b>
+
+Available: <b>${balance.toFixed(2)} USDT</b>
+Mode: <b>${config.trading.isLive ? 'LIVE' : 'PAPER'}</b>
+`.trim(), true);
 }
 
 async function sendSignals(chatId: string): Promise<void> {
@@ -236,7 +240,7 @@ async function sendStats(chatId: string): Promise<void> {
   const trades = getLastNTrades(50);
   const closed = trades.filter(t => t.status !== 'open');
   if (closed.length === 0) {
-    await send(chatId, '📭 Нет закрытых сделок.', true);
+    await send(chatId, '📊 <b>No closed trades</b>', true);
     return;
   }
   const wins = closed.filter(t => t.result === 'win');
@@ -247,14 +251,14 @@ async function sendStats(chatId: string): Promise<void> {
   const avgLoss = losses.length > 0 ? losses.reduce((a, t) => a + (t.pnlPercent ?? 0), 0) / losses.length : 0;
 
   await send(chatId, `
-📊 <b>Статистика (последние ${closed.length} сделок):</b>
+📊 <b>PERFORMANCE</b>
 
-✅ Побед: ${wins.length} | ❌ Поражений: ${losses.length}
+Trades: <b>${closed.length}</b>
+Wins / Losses: <b>${wins.length} / ${losses.length}</b>
 Winrate: <b>${winRate.toFixed(1)}%</b>
-Общий PnL: <b>${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}%</b>
-Средняя прибыль: +${avgWin.toFixed(2)}%
-Средний убыток: ${avgLoss.toFixed(2)}%
-    `.trim(), true);
+PNL: <b>${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}%</b>
+Avg win/loss: <b>+${avgWin.toFixed(2)}% / ${avgLoss.toFixed(2)}%</b>
+`.trim(), true);
 }
 
 function sendPause(chatId: string): void {
@@ -268,26 +272,25 @@ function sendResume(chatId: string): void {
 }
 
 async function sendMode(chatId: string): Promise<void> {
-  const state = getBotState();
   await send(chatId, `
-⚙️ <b>Текущий режим:</b> ${state.mode.toUpperCase()}
-LIVE_TRADING: ${config.trading.isLive ? '🟢 включен' : '🔴 выключен'}
-DEMO_TRADING: ${config.okx.isDemo ? '🟢 включен' : '🔴 выключен'}
-    `.trim(), true);
+⚙️ <b>MODE</b>
+
+Mode: <b>${config.trading.isLive ? 'LIVE' : 'PAPER'}</b>
+Execution: <b>${config.trading.isLive ? 'Real orders' : 'Paper only'}</b>
+`.trim(), true);
 }
 
 async function sendRisk(chatId: string): Promise<void> {
   const state = getBotState();
   await send(chatId, `
-⚙️ <b>Настройки риска:</b>
+⚙️ <b>RISK</b>
 
-Риск на сделку: ${config.trading.riskPerTrade}%
-Макс. дневной убыток: ${config.trading.maxDailyLoss}%
-Макс. открытых позиций: ${config.trading.maxOpenPositions}
-Макс. убытков подряд: ${config.trading.maxLossesInRow}
-Текущий дневной убыток: ${state.dailyLossPercent.toFixed(2)}%
-Убытков подряд сейчас: ${state.consecutiveLosses}
-    `.trim(), true);
+Per trade: <b>${config.trading.riskPerTrade}%</b>
+Daily limit: <b>${config.trading.maxDailyLoss}%</b>
+Max positions: <b>${config.trading.maxOpenPositions}</b>
+Loss streak: <b>${state.consecutiveLosses} / ${config.trading.maxLossesInRow}</b>
+Today loss: <b>${state.dailyLossPercent.toFixed(2)}%</b>
+`.trim(), true);
 }
 
 async function sendReport(chatId: string): Promise<void> {
@@ -295,14 +298,15 @@ async function sendReport(chatId: string): Promise<void> {
     const report = await generateDailyReport();
     await send(chatId, report, true);
   } catch (err: any) {
-    await send(chatId, `Ошибка генерации отчета: ${err.message}`, true);
+    logger.error(`Report error: ${err.message}`);
+    await send(chatId, '📋 <b>Report unavailable</b>\n\nTry again later.', true);
   }
 }
 
 async function sendErrors(chatId: string): Promise<void> {
   const trades = getLastNTrades(20).filter(t => t.result === 'loss');
   if (trades.length === 0) {
-    await send(chatId, '✅ Убыточных сделок нет.', true);
+    await send(chatId, '✅ <b>No loss patterns</b>', true);
     return;
   }
   const tagCounts: Record<string, number> = {};
@@ -311,9 +315,9 @@ async function sendErrors(chatId: string): Promise<void> {
       tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
     }
   }
-  const sorted = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]);
-  const text = sorted.map(([tag, count]) => `• #${tag}: ${count}x`).join('\n');
-  await send(chatId, `⚠️ <b>Частые ошибки (последние 20 сделок):</b>\n${text}`, true);
+  const sorted = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const text = sorted.map(([tag, count]) => `• ${tag.replace(/_/g, ' ')}: ${count}x`).join('\n');
+  await send(chatId, `⚠️ <b>LOSS PATTERNS</b>\n\n${text}`, true);
 }
 
 async function sendAnalyze(chatId: string): Promise<void> {
@@ -326,7 +330,8 @@ async function sendAnalyze(chatId: string): Promise<void> {
       await send(chatId, formatLearningInProgressMessage(completedTrades), true);
     }
   } catch (err: any) {
-    await send(chatId, `Ошибка: ${err.message}`, true);
+    logger.error(`AI analysis error: ${err.message}`);
+    await send(chatId, '🧠 <b>AI unavailable</b>\n\nTry again later.', true);
   }
 }
 

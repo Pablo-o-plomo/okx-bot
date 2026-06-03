@@ -171,9 +171,9 @@ export function formatTpUpdateMessage(trade: Trade, tpLevel: number, currentPric
   const pnlUsdt = (pnlPercent / 100) * trade.positionSize * trade.entryPrice;
 
   return `
-🎯 <b>TP${tpLevel} HIT — ${compactSymbol(trade.symbol)}</b>
+🎯 <b>TP${tpLevel} HIT</b>
 
-${directionStyle(trade.direction)}
+${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
 
 <b>${signed(pnlPercent, 1)}%</b>
 <b>${signed(pnlUsdt, 1)} USDT</b>
@@ -193,9 +193,9 @@ export function formatTradeClosedMessage(trade: Trade, improvements?: string[]):
   const aiFix = improvements?.[0] ? cleanReason(improvements[0]) : undefined;
 
   return `
-${icon} <b>${compactSymbol(trade.symbol)} CLOSED</b>
+${icon} <b>TRADE CLOSED</b>
 
-${directionStyle(trade.direction)}
+${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
 
 PNL: <b>${signed(trade.pnlPercent)}%</b>
 <b>${signed(trade.pnlUsdt)} USDT</b>

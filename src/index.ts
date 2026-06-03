@@ -4,7 +4,7 @@ import path from 'path';
 import cron from 'node-cron';
 import express from 'express';
 import { config } from './config';
-import { initDb, getOpenTrades, getLastNTrades } from './database/db';
+import { initDb, getOpenTrades, getLastNTrades, getRecentSignals } from './database/db';
 import { initTelegramBot, broadcastSignal, sendErrorAlert, recordScannerRun, broadcastScannerHeartbeat } from './telegram/bot';
 import { analyzeSymbol } from './strategy/signalEngine';
 import { checkRisk, calculatePositionSize } from './strategy/riskManager';
@@ -84,7 +84,7 @@ function setupSchedulers(): void {
 // ─── Signal Scan ──────────────────────────────────────────────────────────────
 
 async function runSignalScan(): Promise<void> {
-  let signalsFound = 0;
+  const signalsBefore = getRecentSignals(100).length;
 
   for (const symbol of config.trading.symbols) {
     try {
@@ -97,7 +97,12 @@ async function runSignalScan(): Promise<void> {
     }
   }
 
-  recordScannerRun(config.trading.symbols.length, signalsFound, getOpenTrades().length);
+  const signalsAfter = getRecentSignals(100).length;
+  recordScannerRun(
+    config.trading.symbols.length,
+    Math.max(signalsAfter - signalsBefore, 0),
+    getOpenTrades().length,
+  );
 }
 
 async function processSymbol(symbol: string): Promise<boolean> {
@@ -153,7 +158,6 @@ async function processSymbol(symbol: string): Promise<boolean> {
     await sendErrorAlert(err.message, `Order placement: ${symbol}`);
   }
 
-  return true;
 }
 
 // ─── Unhandled errors ─────────────────────────────────────────────────────────
