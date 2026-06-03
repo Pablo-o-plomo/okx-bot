@@ -149,16 +149,33 @@ export function formatStatusMessage(
   openPositions: number,
   balance: number,
   consecutiveLosses: number,
+  pauseReason: string | undefined,
+  pausedUntil: string | undefined,
+  symbols: readonly string[],
+  timeframes: readonly string[],
 ): string {
-  const statusIcon = isPaused ? '⛔ ОСТАНОВЛЕН' : '✅ АКТИВЕН';
+  const status = isPaused ? '⏸ НА ПАУЗЕ' : '✅ АКТИВЕН';
+  const modeLabel = mode === 'live' ? 'LIVE' : 'PAPER';
+  const scannerText = isPaused
+    ? 'Сканер не открывает новые сделки, потому что бот на паузе.'
+    : 'Сканер рынка работает автоматически каждые 5 минут.';
+
   return `
 🤖 <b>Статус бота OKX</b>
 
-Состояние: <b>${statusIcon}</b>
-Режим: <b>${mode.toUpperCase()}</b>
+Режим: <b>${modeLabel}</b>
+Состояние: <b>${status}</b>
+${pauseReason ? `Причина паузы: <b>${pauseReason}</b>` : 'Причина паузы: —'}
+${pausedUntil ? `Пауза до: <b>${pausedUntil}</b>` : 'Пауза до: —'}
+
 Открытых позиций: <b>${openPositions}</b>
 Баланс: <b>${balance.toFixed(2)} USDT</b>
 Убыточных подряд: <b>${consecutiveLosses}</b>
+
+Символы: <b>${symbols.join(', ')}</b>
+Таймфреймы: <b>${timeframes.join(', ')}</b>
+
+${scannerText}
 `.trim();
 }
 
