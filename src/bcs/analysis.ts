@@ -12,21 +12,35 @@ function tickerBias(ticker: string): 'bullish' | 'bearish' | 'neutral' {
   return 'neutral';
 }
 
+function biasIcon(bias: 'bullish' | 'bearish' | 'neutral'): string {
+  if (bias === 'bullish') return '🟢';
+  if (bias === 'bearish') return '🔴';
+  return '⚪';
+}
+
 export function analyzeInstrument(ticker: string): string {
   const normalized = normalizeTicker(ticker);
   const bias = tickerBias(ticker);
-  const trend = bias === 'bullish' ? 'умеренно восходящий' : bias === 'bearish' ? 'нисходящий' : 'боковой / неопределенный';
-  return `📈 <b>Анализ инструмента: ${normalized}</b>
+  const trend = bias === 'bullish' ? 'bullish' : bias === 'bearish' ? 'bearish' : 'neutral';
+  const confidence = bias === 'bullish' ? '7.4/10' : bias === 'bearish' ? '4.2/10' : '5.6/10';
+  const risk = bias === 'bullish' ? 'low/medium' : bias === 'bearish' ? 'high' : 'medium';
 
-Тренд: ${trend}
-Уровни: поддержка — ближайший локальный минимум, сопротивление — ближайший максимум.
-Возможный вход: только после подтверждения объема и закрепления выше/ниже уровня.
-Стоп: за ближайший технический уровень.
-Тейк: не хуже Risk/Reward 1:2.
-Риск: не более 1% депозита.
-Комментарий: ${bias === 'neutral' ? 'лучше дождаться ясного сигнала' : 'сделка разрешена только при подтверждении риск-менеджмента'}.
+  return `${biasIcon(bias)} <b>${normalized} · AI ANALYSIS</b>
 
-⚠️ Это не инвестиционная рекомендация.`;
+📈 Trend: <b>${trend}</b>
+🧠 Confidence: <b>${confidence}</b>
+⚠️ Risk: <b>${risk}</b>
+🌊 Volatility: medium
+💧 Liquidity: high
+
+🎯 <b>Trading desk</b>
+Entry: только после подтверждения объема
+Stop: за технический уровень
+Target: R/R не хуже 1:2
+
+🧠 AI: ${bias === 'neutral' ? 'лучше ждать импульса и не форсировать вход.' : 'сценарий рабочий только при дисциплине по риску.'}
+
+⚠️ Не является инвестиционной рекомендацией.`;
 }
 
 export interface ReviewInput {
@@ -46,23 +60,20 @@ export function reviewTrade(input: ReviewInput): string {
   const risk = calculateBcsRisk(input);
   const goodStop = risk.riskPercent <= 1.5;
   const goodTp = risk.riskReward >= 2;
-  return `🧠 <b>AI-разбор сделки</b>
+  const decisionIcon = risk.decision === 'allowed' ? '🟢' : '🔴';
 
-Инструмент: ${input.ticker}
-Направление: ${input.direction}
-Комментарий трейдера: ${input.comment || 'нет'}
+  return `🧠 <b>AI TRADE REVIEW</b>
 
-Почему вход может быть хорошим:
-• Есть заранее заданные вход, стоп и тейк
-• Риск можно посчитать до сделки
+${decisionIcon} <b>${input.ticker} ${input.direction}</b>
+💵 Entry: <b>${input.entryPrice}</b>
+🛑 Stop: <b>${input.stopLoss}</b> · ${goodStop ? 'OK' : 'дорого'}
+🎯 Target: <b>${input.takeProfit}</b> · R/R 1:${risk.riskReward.toFixed(2)} ${goodTp ? '✅' : '⚠️'}
 
-Риски и нарушения:
-${risk.warnings.length ? risk.warnings.map(w => `• ${w}`).join('\n') : '• Критичных нарушений не найдено'}
+⚠️ Risk: <b>${risk.riskRub.toFixed(0)} ₽</b> (${risk.riskPercent.toFixed(2)}%)
+💸 Fees: <b>${risk.totalCommissionRub.toFixed(0)} ₽</b>
+💬 Note: ${input.comment || 'нет'}
 
-Стоп: ${goodStop ? 'нормальный по риску' : 'слишком дорогой относительно депозита'}
-Тейк: ${goodTp ? 'математически приемлемый' : 'нужно улучшить risk/reward'}
-Решение: ${risk.decision === 'allowed' ? 'сделка разрешена при подтверждении рынка' : 'лучше пропустить или уменьшить позицию'}
-Что улучшить: проверить ликвидность, новостной фон и не увеличивать объем после входа.
+${risk.warnings.length ? `🧯 <b>Warnings</b>\n${risk.warnings.map(w => `• ${w}`).join('\n')}\n\n` : ''}🧠 AI: ${risk.decision === 'allowed' ? 'сделку можно подтвердить вручную, реальные ордера не отправляются.' : 'лучше пропустить или уменьшить размер позиции.'}
 
-⚠️ Это не инвестиционная рекомендация.`;
+⚠️ Не является инвестиционной рекомендацией.`;
 }

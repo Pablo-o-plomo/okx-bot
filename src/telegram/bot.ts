@@ -5,6 +5,8 @@ import { calculateBcsCommission, formatBcsCommissionSettings } from '../bcs/comm
 import { analyzeInstrument, reviewTrade } from '../bcs/analysis';
 import { calculateBcsRisk, formatRub } from '../bcs/risk';
 import { formatDailyBcsReport, formatDiary, formatMonthlyBcsReport, formatPortfolio } from '../bcs/reports';
+import { formatMarketScanner, formatMarketSentiment, marketSentiment, scanMarket } from '../bcs/marketScanner';
+import { aiDashboardCardUrl, equityCurveUrl, marketHeatmapUrl, miniCandlesUrl, pnlChartUrl } from './charts';
 import { logger } from '../utils/logger';
 import { BUILD_VERSION } from '../version';
 import type { Signal, Trade } from '../database/models';
@@ -32,7 +34,7 @@ export function initTelegramBot(): TelegramBot {
   initBcsDb();
   bot = new TelegramBot(config.telegram.botToken, { polling: true });
   registerCommands();
-  logger.info('🤖 BCS Trading Assistant started');
+  logger.info('🤖 Crypto Trading Bot started');
   logger.info(`BUILD VERSION: ${BUILD_VERSION}`);
   return bot;
 }
@@ -54,11 +56,10 @@ function isAdminMessage(chatId: string | number, fromId?: string | number): bool
 function mainKeyboard(): TelegramBot.InlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      [{ text: '📊 Портфель', callback_data: 'portfolio' }, { text: '📝 Добавить сделку', callback_data: 'add_trade' }],
-      [{ text: '📈 Анализ инструмента', callback_data: 'analyze_instrument' }, { text: '🧠 AI-разбор', callback_data: 'ai_review' }],
-      [{ text: '⚠️ Риск-менеджмент', callback_data: 'risk' }, { text: '💰 Комиссии БКС', callback_data: 'fees' }],
-      [{ text: '📋 Дневник сделок', callback_data: 'diary' }, { text: '📅 Отчет за день', callback_data: 'daily_report' }],
-      [{ text: '📆 Отчет за месяц', callback_data: 'monthly_report' }, { text: '⚙️ Настройки', callback_data: 'settings' }],
+      [{ text: '📊 Анализ рынка', callback_data: 'market' }, { text: '🤖 Статус бота', callback_data: 'settings' }],
+      [{ text: '▶️ Возобновить торговлю', callback_data: 'resume' }, { text: '⏸ Пауза', callback_data: 'pause' }],
+      [{ text: '⚠️ Риск', callback_data: 'risk' }, { text: '📋 Отчеты', callback_data: 'reports' }],
+      [{ text: '⚙️ Настройки', callback_data: 'settings' }],
     ],
   };
 }
@@ -71,6 +72,14 @@ async function send(chatId: string | number, text: string, options: TelegramBot.
   }
 }
 
+async function sendPhoto(chatId: string | number, photoUrl: string, caption?: string): Promise<void> {
+  try {
+    await getBot().sendPhoto(chatId, photoUrl, { caption, parse_mode: 'HTML' });
+  } catch (err: any) {
+    logger.error(`Telegram photo send failed: ${err.message}`);
+  }
+}
+
 async function handleStart(chatId: number, fromId?: number): Promise<void> {
   logger.info(`START: chat=${chatId}, from=${fromId}, admin=${config.telegram.adminId}`);
   if (!isAdminMessage(chatId, fromId)) {
@@ -78,7 +87,12 @@ async function handleStart(chatId: number, fromId?: number): Promise<void> {
     return;
   }
   ensureUser(fromId ?? chatId);
-  await send(chatId, `🤖 <b>BCS Trading Assistant</b>\nBuild: ${BUILD_VERSION}\n\nВыберите раздел:`, { reply_markup: mainKeyboard() });
+  await send(chatId, `🤖 <b>CRYPTO TRADING BOT</b>
+
+⚡ Trading desk online
+🧠 Build: <code>${BUILD_VERSION}</code>
+
+Выберите действие:`, { reply_markup: mainKeyboard() });
 }
 
 async function handleMenu(chatId: number, fromId?: number): Promise<void> {
@@ -87,7 +101,23 @@ async function handleMenu(chatId: number, fromId?: number): Promise<void> {
 
 async function handlePortfolio(chatId: number): Promise<void> {
   const settings = getSettings(chatId);
-  await send(chatId, formatPortfolio(getOpenBcsTrades(chatId), getClosedBcsTrades(chatId), settings.depositRub));
+  const openTrades = getOpenBcsTrades(chatId);
+  const closedTrades = getClosedBcsTrades(chatId);
+  await send(chatId, formatPortfolio(openTrades, closedTrades, settings.depositRub));
+  await sendPhoto(chatId, equityCurveUrl(closedTrades, settings.depositRub), '📈 <b>Equity curve</b>');
+  await sendPhoto(chatId, pnlChartUrl(closedTrades), '💹 <b>P&L chart</b>');
+}
+
+async function handleMarketScanner(chatId: number): Promise<void> {
+  const items = scanMarket();
+  const sentiment = marketSentiment(items);
+  await send(chatId, formatMarketScanner(items, sentiment), {
+    reply_markup: { inline_keyboard: [[{ text: '📡 Сканер рынка', callback_data: 'market' }, { text: '📝 Добавить сделку', callback_data: 'add_trade' }]] },
+  });
+  await sendPhoto(chatId, marketHeatmapUrl(items.map(item => ({ symbol: item.symbol, score: item.confidence, trend: item.trend }))), '🔥 <b>Market heatmap</b>');
+  await sendPhoto(chatId, aiDashboardCardUrl({ imoexGrowthProbability: sentiment.imoexGrowthProbability, confidence: sentiment.confidence, risk: sentiment.risk, volatility: sentiment.volatility }), '🧠 <b>AI dashboard card</b>');
+  const top = items[0];
+  if (top) await sendPhoto(chatId, miniCandlesUrl(top.symbol, top.trend), `🕯 <b>${top.symbol} mini candles</b>`);
 }
 
 async function handleDiary(chatId: number): Promise<void> {
@@ -105,7 +135,14 @@ async function handleMonthlyReport(chatId: number): Promise<void> {
 
 async function handleRisk(chatId: number): Promise<void> {
   const settings = getSettings(chatId);
-  await send(chatId, `⚠️ <b>Риск-менеджмент</b>\n\nДепозит: ${settings.depositRub.toFixed(2)} ₽\nРиск на сделку: ${settings.riskPerTrade.toFixed(2)}%\n\nПравила:\n• риск на сделку не выше 1–2% депозита\n• вход только со стопом и тейком\n• risk/reward желательно не хуже 1:2\n• комиссии учитывать до входа\n\n⚠️ Это не инвестиционная рекомендация.`);
+  await send(chatId, `⚠️ <b>RISK DESK</b>
+
+🟢 Deposit: <b>${settings.depositRub.toLocaleString('ru-RU')} ₽</b>
+🛡 Risk/trade: <b>${settings.riskPerTrade.toFixed(2)}%</b>
+📐 Target R/R: <b>1:2+</b>
+💸 Fees: included before entry
+
+🧠 AI: не увеличивать позицию после входа, стоп обязателен, серия убытков → снижение размера.`);
 }
 
 async function handleFees(chatId: number): Promise<void> {
@@ -114,15 +151,34 @@ async function handleFees(chatId: number): Promise<void> {
 
 async function handleSettings(chatId: number): Promise<void> {
   const settings = getSettings(chatId);
-  await send(chatId, `⚙️ <b>Настройки</b>\n\nБрокер: ${config.app.broker}\nДепозит по умолчанию: ${settings.depositRub.toFixed(2)} ₽\nРиск на сделку: ${settings.riskPerTrade.toFixed(2)}%\nАвтоторговля: отключена\n\nДля изменения базовых настроек используйте ENV.`);
+  await send(chatId, `⚙️ <b>SETTINGS</b>
+
+🏦 Broker: <b>${config.app.broker}</b>
+💼 Deposit: <b>${settings.depositRub.toLocaleString('ru-RU')} ₽</b>
+🛡 Risk/trade: <b>${settings.riskPerTrade.toFixed(2)}%</b>
+📡 Symbols: <b>${config.trading.symbols.join(', ')}</b>
+🤖 Auto trading: <b>OFF</b>
+
+Manual trading architecture готова: подтверждения доступны в сигналах, реальные ордера не отправляются.`, {
+    reply_markup: { inline_keyboard: [[{ text: '📝 Добавить сделку', callback_data: 'add_trade' }, { text: '💸 Комиссии', callback_data: 'fees' }]] },
+  });
 }
 
 async function handleAnalyzePrompt(chatId: number): Promise<void> {
-  await send(chatId, 'Введите тикер для анализа, например: <code>/analyze SBER</code>');
+  await send(chatId, `${formatMarketSentiment()}
+
+🔎 Пара: <code>/analyze BTC-USDT</code>`, {
+    reply_markup: { inline_keyboard: [[{ text: '📡 Сканер рынка', callback_data: 'market' }]] },
+  });
 }
 
 async function handleAiPrompt(chatId: number): Promise<void> {
-  await send(chatId, 'Для AI-разбора добавьте сделку через меню или отправьте: <code>/review SBER stock LONG 250 10 240 275 10 комментарий</code>');
+  await send(chatId, `🧠 <b>AI ANALYSIS</b>
+
+📡 Market scanner: /market
+🔎 Пара: <code>/analyze BTC-USDT</code>`, {
+    reply_markup: { inline_keyboard: [[{ text: '📡 Сканер рынка', callback_data: 'market' }, { text: '📝 Добавить сделку', callback_data: 'add_trade' }]] },
+  });
 }
 
 function parseNumber(value: string): number | undefined {
@@ -140,7 +196,7 @@ function isDirection(value: string): value is BcsTradeDirection {
 
 async function startAddTrade(chatId: number): Promise<void> {
   addTradeDrafts.set(chatId, { step: 'ticker', userId: chatId });
-  await send(chatId, '📝 <b>Добавление сделки</b>\n\nВведите тикер, например SBER, GAZP, Si, BR:');
+  await send(chatId, '📝 <b>Добавление сделки</b>\n\nВведите торговую пару, например BTC-USDT, ETH-USDT, SOL-USDT:');
 }
 
 async function handleAddTradeText(chatId: number, text: string): Promise<boolean> {
@@ -208,7 +264,22 @@ async function handleAddTradeText(chatId: number, text: string): Promise<boolean
     });
     const tradeId = saveBcsTrade(complete);
     addTradeDrafts.delete(chatId);
-    await send(chatId, `✅ <b>Сделка добавлена</b> #${tradeId}\n\n${complete.ticker} ${complete.direction}\nСумма позиции: ${risk.positionAmountRub.toFixed(2)} ₽\nРиск: ${risk.riskRub.toFixed(2)} ₽ (${risk.riskPercent.toFixed(2)}%)\nПотенциальная прибыль: ${risk.potentialProfitRub.toFixed(2)} ₽\nRisk/Reward: 1:${risk.riskReward.toFixed(2)}\nКомиссия: ${risk.totalCommissionRub.toFixed(2)} ₽\nРешение: ${risk.decision === 'allowed' ? 'сделка допустима' : 'лучше пропустить'}\n${risk.warnings.length ? `\nПредупреждения:\n${risk.warnings.map(w => `• ${w}`).join('\n')}` : ''}\n\n⚠️ Это не инвестиционная рекомендация.`);
+    await send(chatId, `✅ <b>TRADE CARD #${tradeId}</b>
+
+${risk.decision === 'allowed' ? '🟢' : '🔴'} <b>${complete.ticker} ${complete.direction}</b>
+💼 Size: <b>${risk.positionAmountRub.toFixed(0)} ₽</b>
+⚠️ Risk: <b>${risk.riskRub.toFixed(0)} ₽</b> (${risk.riskPercent.toFixed(2)}%)
+🎯 Potential: <b>${risk.potentialProfitRub.toFixed(0)} ₽</b>
+📐 R/R: <b>1:${risk.riskReward.toFixed(2)}</b>
+💸 Fee: <b>${risk.totalCommissionRub.toFixed(0)} ₽</b>
+
+🧠 AI: ${risk.decision === 'allowed' ? 'сделка допустима для ручного подтверждения.' : 'лучше пропустить.'}
+${risk.warnings.length ? `
+🧯 ${risk.warnings.map(w => `• ${w}`).join('\n')}` : ''}
+
+⚠️ Не является инвестиционной рекомендацией.`, {
+      reply_markup: { inline_keyboard: [[{ text: '✅ Подтвердить сделку', callback_data: `manual_confirm_${tradeId}` }, { text: '❌ Отмена', callback_data: `manual_cancel_${tradeId}` }]] },
+    });
     return true;
   }
 
@@ -267,9 +338,19 @@ async function handleCallback(query: TelegramBot.CallbackQuery): Promise<void> {
 }
 
 async function handleAction(chatId: number, action: string): Promise<void> {
+  if (action.startsWith('manual_confirm_')) return send(chatId, `✅ Сделка #${action.replace('manual_confirm_', '')} подтверждена вручную. Реальные ордера отключены.`);
+  if (action.startsWith('manual_cancel_')) return send(chatId, `❌ Сделка #${action.replace('manual_cancel_', '')} отменена. Ордера не отправлялись.`);
+  if (action.startsWith('signal_confirm_')) return send(chatId, `✅ Сигнал #${action.replace('signal_confirm_', '')} подтвержден. Модуль реальных ордеров пока отключен.`);
+  if (action.startsWith('signal_cancel_')) return send(chatId, `❌ Сигнал #${action.replace('signal_cancel_', '')} отменен.`);
+
   switch (action) {
     case 'portfolio': return handlePortfolio(chatId);
     case 'add_trade': return startAddTrade(chatId);
+    case 'market':
+    case 'market_scanner': return handleMarketScanner(chatId);
+    case 'reports':
+      await handleDailyReport(chatId);
+      return handleMonthlyReport(chatId);
     case 'analyze_instrument': return handleAnalyzePrompt(chatId);
     case 'ai_review': return handleAiPrompt(chatId);
     case 'risk': return handleRisk(chatId);
@@ -278,6 +359,10 @@ async function handleAction(chatId: number, action: string): Promise<void> {
     case 'daily_report': return handleDailyReport(chatId);
     case 'monthly_report': return handleMonthlyReport(chatId);
     case 'settings': return handleSettings(chatId);
+    case 'pause': return send(chatId, '⏸ Пауза: используйте команду администратора /pause.');
+    case 'resume': return send(chatId, '▶️ Возобновление: используйте команду администратора /resume.');
+    case 'manual_confirm': return send(chatId, '✅ Сделка подтверждена вручную. Реальные ордера отключены.');
+    case 'manual_cancel': return send(chatId, '❌ Сценарий отменен. Ордера не отправлялись.');
     default: return send(chatId, 'Раздел в разработке.');
   }
 }
@@ -300,7 +385,7 @@ async function handleReviewCommand(chatId: number, text: string): Promise<void> 
   const takeProfit = parseNumber(take);
   const commissionRub = parseNumber(commission) ?? 0;
   if ([entryPrice, quantity, stopLoss, takeProfit].some(v => v === undefined)) {
-    await send(chatId, 'Не удалось прочитать числа. Формат: /review SBER stock LONG 250 10 240 275 10 комментарий');
+    await send(chatId, 'Не удалось прочитать числа. Проверьте формат команды /review.');
     return;
   }
   const review = reviewTrade({
@@ -333,7 +418,14 @@ async function handleCloseCommand(chatId: number, text: string): Promise<void> {
     await send(chatId, 'Сделка не найдена.');
     return;
   }
-  await send(chatId, `✅ <b>Сделка закрыта</b> #${trade.id}\n${trade.ticker} ${trade.direction}\nP&L: ${trade.pnlPercent >= 0 ? '+' : ''}${trade.pnlPercent.toFixed(2)}% | ${formatRub(trade.pnlRub)}\nКомиссии учтены.\n\n⚠️ Это не инвестиционная рекомендация.`);
+  await send(chatId, `${trade.pnlRub >= 0 ? '🟢' : '🔴'} <b>TRADE CLOSED #${trade.id}</b>
+
+<b>${trade.ticker}</b> ${trade.direction}
+💹 P&L: <b>${trade.pnlPercent >= 0 ? '+' : ''}${trade.pnlPercent.toFixed(2)}%</b> · ${formatRub(trade.pnlRub)}
+💸 Fees included
+
+⚠️ Не является инвестиционной рекомендацией.`);
+
 }
 
 function registerAdminCommand(regex: RegExp, handler: (chatId: number, text: string, fromId?: number) => Promise<void>): void {
@@ -357,9 +449,11 @@ function registerCommands(): void {
   registerAdminCommand(/^\/diary(?:@\w+)?(?:\s|$)/, async (chatId) => handleDiary(chatId));
   registerAdminCommand(/^\/daily(?:@\w+)?(?:\s|$)/, async (chatId) => handleDailyReport(chatId));
   registerAdminCommand(/^\/month(?:@\w+)?(?:\s|$)/, async (chatId) => handleMonthlyReport(chatId));
+  registerAdminCommand(/^\/reports(?:@\w+)?(?:\s|$)/, async (chatId) => { await handleDailyReport(chatId); await handleMonthlyReport(chatId); });
   registerAdminCommand(/^\/fees(?:@\w+)?(?:\s|$)/, async (chatId) => handleFees(chatId));
   registerAdminCommand(/^\/risk(?:@\w+)?(?:\s|$)/, async (chatId) => handleRisk(chatId));
   registerAdminCommand(/^\/settings(?:@\w+)?(?:\s|$)/, async (chatId) => handleSettings(chatId));
+  registerAdminCommand(/^\/(?:market|scan|scanner)(?:@\w+)?(?:\s|$)/, async (chatId) => handleMarketScanner(chatId));
   registerAdminCommand(/^\/analyze(?:@\w+)?(?:\s|$)/, async (chatId, text) => handleAnalyzeCommand(chatId, text));
   registerAdminCommand(/^\/review(?:@\w+)?(?:\s|$)/, async (chatId, text) => handleReviewCommand(chatId, text));
   registerAdminCommand(/^\/close(?:@\w+)?(?:\s|$)/, async (chatId, text) => handleCloseCommand(chatId, text));
@@ -387,7 +481,10 @@ export async function broadcastMessage(text: string): Promise<void> {
 
 // Compatibility exports for archived trading modules. BCS version does not auto-trade.
 export async function broadcastSignal(signal: Signal): Promise<void> {
-  await sendAdminMessage(formatSignalMessage(signal));
+  if (!config.telegram.adminId) return;
+  await send(config.telegram.adminId, formatSignalMessage(signal), {
+    reply_markup: { inline_keyboard: [[{ text: '✅ Подтвердить сделку', callback_data: `signal_confirm_${signal.id ?? signal.symbol}` }, { text: '❌ Отмена', callback_data: `signal_cancel_${signal.id ?? signal.symbol}` }]] },
+  });
 }
 
 export async function broadcastTradeOpened(trade: Trade, signal: Signal): Promise<void> {

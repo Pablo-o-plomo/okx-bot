@@ -36,46 +36,34 @@ export function getAdminKeyboard(): TelegramBot.SendMessageOptions['reply_markup
   return {
     inline_keyboard: [
       [
-        { text: '📊 Статистика', callback_data: 'stats' },
-        { text: '📂 Позиции', callback_data: 'positions' },
+        { text: '📊 Анализ рынка', callback_data: 'market' },
+        { text: '🤖 Статус бота', callback_data: 'health' },
       ],
       [
-        { text: '📈 Винрейт', callback_data: 'winrate' },
-        { text: '🧠 Анализ', callback_data: 'analyze' },
-      ],
-      [
-        { text: '📄 Отчет', callback_data: 'report' },
-        { text: '🚫 Отклонения', callback_data: 'rejects' },
-      ],
-      [
-        { text: '🌍 Рынок', callback_data: 'market' },
-        { text: '💓 Здоровье', callback_data: 'health' },
-      ],
-      [
-        { text: '⚙️ Режим', callback_data: 'mode' },
-        { text: '🛡 Риски', callback_data: 'risk' },
-      ],
-      [
+        { text: '▶️ Возобновить торговлю', callback_data: 'resume' },
         { text: '⏸ Пауза', callback_data: 'pause' },
-        { text: '▶️ Возобновить', callback_data: 'resume' },
       ],
       [
-        { text: '📜 Последние сделки', callback_data: 'closed' },
-        { text: '📡 Сканировать', callback_data: 'scan' },
+        { text: '⚠️ Риск', callback_data: 'risk' },
+        { text: '📋 Отчеты', callback_data: 'report' },
       ],
       [
-        { text: '🧾 Логи', callback_data: 'logs' },
-        { text: '🧠 Версия', callback_data: 'version' },
+        { text: '⚙️ Настройки', callback_data: 'mode' },
       ],
     ],
   };
 }
 
+
 export async function sendAdminMenu(bot: TelegramBot, chatId: string): Promise<void> {
-  await bot.sendMessage(chatId, `🤖 BCS Trading Assistant\n\nСборка:\n${BUILD_VERSION}`, {
+  await bot.sendMessage(chatId, `🤖 CRYPTO TRADING BOT
+
+Build:
+${BUILD_VERSION}`, {
     reply_markup: getAdminKeyboard(),
   });
 }
+
 
 export async function handleAdminCallback(bot: TelegramBot, query: TelegramBot.CallbackQuery): Promise<boolean> {
   if (!query.data) return false;

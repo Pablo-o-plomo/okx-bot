@@ -38,7 +38,34 @@ function calculatePnlPercent(trade: Trade, price: number): number {
 }
 
 function tradeProgress(trade: Trade) {
-  return trade.progress ?? { tp1: false, tp2: false, tp3: false, breakeven: false, partiallyClosed: false };
+  return trade.progress ?? {
+    tp1: false,
+    tp2: false,
+    tp3: false,
+    breakeven: false,
+    partiallyClosed: false,
+    trailingStopActive: false,
+  };
+}
+
+function stopCloseStatus(trade: Trade): TradeStatus {
+  const pnlAtStop = calculatePnlPercent(trade, trade.stopLoss);
+  if (Math.abs(pnlAtStop) < 0.01) return 'closed_breakeven';
+  if (pnlAtStop > 0) return 'closed_win';
+  return 'closed_sl';
+}
+
+function trailingDistance(trade: Trade): number {
+  const tpDistance = Math.abs(trade.takeProfit3 - trade.takeProfit2);
+  return tpDistance > 0 ? tpDistance : Math.abs(trade.takeProfit1 - trade.entryPrice);
+}
+
+function nextTrailingStop(trade: Trade, currentPrice: number): number {
+  const distance = trailingDistance(trade);
+  if (distance <= 0) return trade.stopLoss;
+  return trade.direction === 'LONG'
+    ? Math.max(trade.stopLoss, currentPrice - distance)
+    : Math.min(trade.stopLoss, currentPrice + distance);
 }
 
 async function checkTrade(trade: Trade): Promise<void> {
@@ -57,61 +84,108 @@ async function checkTrade(trade: Trade): Promise<void> {
   const hitTPs = tpHitMap.get(id)!;
 
   const isLong = trade.direction === 'LONG';
+  let activeTrade = trade;
+
+  if (tradeProgress(activeTrade).trailingStopActive) {
+    const movedStop = nextTrailingStop(activeTrade, currentPrice);
+    if (movedStop !== activeTrade.stopLoss) {
+      const progress = tradeProgress(activeTrade);
+      updateTradeLifecycle(id, {
+        status: 'trailing_stop_active',
+        stopLoss: movedStop,
+        currentPnl: calculatePnlPercent(activeTrade, currentPrice),
+        progress,
+      });
+      activeTrade = { ...activeTrade, stopLoss: movedStop, status: 'trailing_stop_active', progress };
+    }
+  }
 
   // ── Check Stop Loss ──
   const slHit = isLong
-    ? currentPrice <= trade.stopLoss
-    : currentPrice >= trade.stopLoss;
+    ? currentPrice <= activeTrade.stopLoss
+    : currentPrice >= activeTrade.stopLoss;
 
   if (slHit) {
-    await handleClose(trade, currentPrice, 'closed_sl');
+    await handleClose(activeTrade, activeTrade.stopLoss, stopCloseStatus(activeTrade));
     return;
   }
 
   // ── Check Take Profits ──
-  const tp3Hit = isLong ? currentPrice >= trade.takeProfit3 : currentPrice <= trade.takeProfit3;
-  const tp2Hit = isLong ? currentPrice >= trade.takeProfit2 : currentPrice <= trade.takeProfit2;
-  const tp1Hit = isLong ? currentPrice >= trade.takeProfit1 : currentPrice <= trade.takeProfit1;
+  const tp3Hit = isLong ? currentPrice >= activeTrade.takeProfit3 : currentPrice <= activeTrade.takeProfit3;
+  const tp2Hit = isLong ? currentPrice >= activeTrade.takeProfit2 : currentPrice <= activeTrade.takeProfit2;
+  const tp1Hit = isLong ? currentPrice >= activeTrade.takeProfit1 : currentPrice <= activeTrade.takeProfit1;
+  const now = new Date().toISOString();
+  const currentPnl = calculatePnlPercent(activeTrade, currentPrice);
 
   if (tp3Hit && !hitTPs.has(3)) {
     hitTPs.add(3);
+    const progress = {
+      ...tradeProgress(activeTrade),
+      tp1: true,
+      tp2: true,
+      tp3: true,
+      breakeven: true,
+      partiallyClosed: false,
+      trailingStopActive: config.trading.enableTrailingStop,
+    };
+
+    if (config.trading.enableTrailingStop) {
+      const newStopLoss = isLong
+        ? Math.max(activeTrade.stopLoss, activeTrade.takeProfit2)
+        : Math.min(activeTrade.stopLoss, activeTrade.takeProfit2);
+      updateTradeLifecycle(id, {
+        status: 'trailing_stop_active',
+        stopLoss: newStopLoss,
+        currentPnl,
+        tp3HitAt: now,
+        trailingStopActivatedAt: now,
+        progress,
+      });
+      await broadcastTpHit({ ...activeTrade, stopLoss: newStopLoss, progress, status: 'trailing_stop_active', currentPnl }, 3, currentPrice);
+      logger.info(`📈 Trailing stop activated for ${activeTrade.symbol}`);
+      return;
+    }
+
     await updateTradeLifecycle(id, {
       status: 'tp3_hit',
-      currentPnl: calculatePnlPercent(trade, currentPrice),
-      tp3HitAt: new Date().toISOString(),
-      progress: { ...tradeProgress(trade), tp1: true, tp2: true, tp3: true, breakeven: true },
+      currentPnl,
+      tp3HitAt: now,
+      progress,
     });
-    await handleClose(trade, currentPrice, 'closed_win');
+    await handleClose({ ...activeTrade, progress }, currentPrice, 'closed_win');
     tpHitMap.delete(id);
     return;
   }
 
   if (tp2Hit && !hitTPs.has(2)) {
     hitTPs.add(2);
-    const progress = { ...tradeProgress(trade), tp1: true, tp2: true, breakeven: true, partiallyClosed: true };
+    const progress = { ...tradeProgress(activeTrade), tp1: true, tp2: true, breakeven: true, partiallyClosed: true };
     updateTradeLifecycle(id, {
-      status: 'partially_closed',
-      currentPnl: calculatePnlPercent(trade, currentPrice),
-      tp2HitAt: new Date().toISOString(),
+      status: 'partial_take_profit_hit',
+      stopLoss: activeTrade.takeProfit1,
+      currentPnl,
+      tp1HitAt: now,
+      tp2HitAt: now,
       progress,
     });
-    await broadcastTpHit({ ...trade, progress, status: 'partially_closed', currentPnl: calculatePnlPercent(trade, currentPrice) }, 2, currentPrice);
-    logger.info(`📈 TP2 hit for ${trade.symbol} — moving SL to breakeven`);
+    await broadcastTpHit({ ...activeTrade, stopLoss: activeTrade.takeProfit1, progress, status: 'partial_take_profit_hit', currentPnl }, 2, currentPrice);
+    logger.info(`🔒 Stop moved to TP1 for ${activeTrade.symbol}`);
     return;
   }
 
   if (tp1Hit && !hitTPs.has(1)) {
     hitTPs.add(1);
-    const progress = { ...tradeProgress(trade), tp1: true, breakeven: true, partiallyClosed: true };
+    const progress = { ...tradeProgress(activeTrade), tp1: true, breakeven: true, partiallyClosed: true };
     updateTradeLifecycle(id, {
-      status: 'partially_closed',
-      currentPnl: calculatePnlPercent(trade, currentPrice),
-      tp1HitAt: new Date().toISOString(),
-      breakevenMovedAt: new Date().toISOString(),
+      status: 'breakeven_activated',
+      stopLoss: activeTrade.entryPrice,
+      currentPnl,
+      tp1HitAt: now,
+      breakevenMovedAt: now,
       progress,
     });
-    await broadcastTpHit({ ...trade, progress, status: 'partially_closed', currentPnl: calculatePnlPercent(trade, currentPrice) }, 1, currentPrice);
-    logger.info(`📈 TP1 hit for ${trade.symbol}`);
+    await broadcastTpHit({ ...activeTrade, stopLoss: activeTrade.entryPrice, progress, status: 'breakeven_activated', currentPnl }, 1, currentPrice);
+    logger.info(`🔒 Stop moved to breakeven for ${activeTrade.symbol}`);
   }
 }
 
