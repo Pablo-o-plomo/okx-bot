@@ -4,18 +4,20 @@ import { logger } from '../utils/logger';
 import {
   formatSignalMessage,
   formatTradeClosedMessage,
-  sendTradeUpdate as buildTpMessage,
-  formatDailyReport,
+  formatTpUpdateMessage,
   formatStatusMessage,
   formatErrorAlert,
   formatLearningReport,
+  formatPositionsMessage,
+  formatSignalsListMessage,
+  formatLearningInProgressMessage,
+  formatHeartbeatMessage,
 } from './messages';
 import {
   getBotState,
   getOpenTrades,
   getRecentSignals,
   getLastNTrades,
-  getTodayTrades,
 } from '../database/db';
 import { getAccountBalance } from '../okx/trading';
 import { pauseBot, resumeBot } from '../strategy/riskManager';
@@ -25,6 +27,24 @@ import type { Signal, Trade } from '../database/models';
 
 let bot: TelegramBot;
 const ADMIN_IDS = config.telegram.adminId ? [config.telegram.adminId] : [];
+
+const scannerTelemetry = {
+  checkedSymbols: config.trading.symbols.length,
+  signalsFound: 0,
+  openPositions: 0,
+  lastScan: undefined as string | undefined,
+};
+
+function formatClock(date = new Date()): string {
+  return date.toISOString().slice(11, 16);
+}
+
+export function recordScannerRun(checkedSymbols: number, signalsFound: number, openPositions: number): void {
+  scannerTelemetry.checkedSymbols = checkedSymbols;
+  scannerTelemetry.signalsFound = signalsFound;
+  scannerTelemetry.openPositions = openPositions;
+  scannerTelemetry.lastScan = formatClock();
+}
 
 export function initTelegramBot(): TelegramBot {
   bot = new TelegramBot(config.telegram.botToken, { polling: true });
@@ -175,17 +195,17 @@ async function sendStatus(chatId: string): Promise<void> {
   const state = getBotState();
   const openTrades = getOpenTrades();
   const balance = await getAccountBalance();
-  await send(chatId, formatStatusMessage(
-    config.trading.isLive ? 'live' : 'paper',
-    state.isPaused,
-    openTrades.length,
+  await send(chatId, formatStatusMessage({
+    mode: config.trading.isLive ? 'LIVE' : 'PAPER',
+    isPaused: state.isPaused,
+    openPositions: openTrades.length,
     balance,
-    state.consecutiveLosses,
-    state.pauseReason,
-    state.pausedUntil,
-    config.trading.symbols,
-    config.trading.timeframes,
-  ), true);
+    consecutiveLosses: state.consecutiveLosses,
+    pauseReason: state.pauseReason,
+    symbolsCount: config.trading.symbols.length,
+    timeframes: config.trading.timeframes,
+    lastScan: scannerTelemetry.lastScan,
+  }), true);
 }
 
 async function sendBalance(chatId: string): Promise<void> {
@@ -197,25 +217,19 @@ async function sendBalance(chatId: string): Promise<void> {
 async function sendSignals(chatId: string): Promise<void> {
   const signals = getRecentSignals(5);
   if (signals.length === 0) {
-    await send(chatId, '📭 Нет сигналов в базе.', true);
+    await send(chatId, '📈 <b>No recent signals</b>', true);
     return;
   }
-  const text = signals.map(s =>
-    `• ${s.symbol} ${s.direction} @ ${s.entryPrice} | Уверенность: ${s.confidence}/10 | ${s.status} | ${s.createdAt?.split('T')[0]}`
-  ).join('\n');
-  await send(chatId, `📋 <b>Последние сигналы:</b>\n${text}`, true);
+  await send(chatId, formatSignalsListMessage(signals), true);
 }
 
 async function sendPositions(chatId: string): Promise<void> {
   const trades = getOpenTrades();
   if (trades.length === 0) {
-    await send(chatId, '📭 Нет открытых позиций.', true);
+    await send(chatId, '📦 <b>No open positions</b>', true);
     return;
   }
-  const text = trades.map(t =>
-    `• ${t.symbol} ${t.direction} @ ${t.entryPrice} | SL: ${t.stopLoss} | TP1: ${t.takeProfit1}`
-  ).join('\n');
-  await send(chatId, `📊 <b>Открытые позиции (${trades.length}):</b>\n${text}`, true);
+  await send(chatId, formatPositionsMessage(trades), true);
 }
 
 async function sendStats(chatId: string): Promise<void> {
@@ -308,7 +322,8 @@ async function sendAnalyze(chatId: string): Promise<void> {
     if (report) {
       await send(chatId, formatLearningReport(report), true);
     } else {
-      await send(chatId, '📭 Недостаточно данных для анализа (нужно минимум 10 сделок).', true);
+      const completedTrades = getLastNTrades(10).filter(t => t.status !== 'open').length;
+      await send(chatId, formatLearningInProgressMessage(completedTrades), true);
     }
   } catch (err: any) {
     await send(chatId, `Ошибка: ${err.message}`, true);
@@ -341,13 +356,20 @@ export async function broadcastTradeClosed(trade: Trade, improvements?: string[]
 }
 
 export async function broadcastTpHit(trade: Trade, level: number, price: number): Promise<void> {
-  const text = await buildTpMessage(trade, level, price);
+  const text = formatTpUpdateMessage(trade, level, price);
   await send(config.telegram.chatId, text);
 }
 
 export async function sendErrorAlert(error: string, context?: string): Promise<void> {
-  const target = config.telegram.adminId || config.telegram.chatId;
-  await send(target, formatErrorAlert(error, context));
+  if (!config.telegram.adminId) {
+    logger.error(`Telegram admin alert skipped: ${context ? `${context}: ` : ''}${error}`);
+    return;
+  }
+  await send(config.telegram.adminId, formatErrorAlert(error, context));
+}
+
+export async function broadcastScannerHeartbeat(): Promise<void> {
+  await send(config.telegram.chatId, formatHeartbeatMessage(scannerTelemetry));
 }
 
 export async function broadcastMessage(text: string): Promise<void> {

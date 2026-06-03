@@ -5,7 +5,7 @@ import cron from 'node-cron';
 import express from 'express';
 import { config } from './config';
 import { initDb, getOpenTrades, getLastNTrades } from './database/db';
-import { initTelegramBot, broadcastSignal, broadcastMessage, broadcastTradeClosed, broadcastTpHit, sendErrorAlert } from './telegram/bot';
+import { initTelegramBot, broadcastSignal, sendErrorAlert, recordScannerRun, broadcastScannerHeartbeat } from './telegram/bot';
 import { analyzeSymbol } from './strategy/signalEngine';
 import { checkRisk, calculatePositionSize } from './strategy/riskManager';
 import { monitorOpenTrades } from './strategy/tradeManager';
@@ -40,16 +40,6 @@ async function bootstrap(): Promise<void> {
   // 4. Start schedulers
   setupSchedulers();
 
-  await broadcastMessage(`
-🤖 <b>OKX Trading Bot запущен</b>
-
-Режим: <b>${config.trading.isLive ? '🔴 LIVE TRADING' : '📄 PAPER TRADING'}</b>
-Символы: ${config.trading.symbols.join(', ')}
-Тайм-фреймы: ${config.trading.timeframes.join(', ')}
-
-Бот начинает анализ рынка...
-  `.trim());
-
   logger.info('✅ Bot fully initialized');
 }
 
@@ -83,38 +73,49 @@ function setupSchedulers(): void {
     }
   });
 
+  // Premium feed heartbeat — every 30 minutes
+  cron.schedule('*/30 * * * *', async () => {
+    await broadcastScannerHeartbeat();
+  });
+
   logger.info('⏰ Schedulers started');
 }
 
 // ─── Signal Scan ──────────────────────────────────────────────────────────────
 
 async function runSignalScan(): Promise<void> {
+  let signalsFound = 0;
+
   for (const symbol of config.trading.symbols) {
     try {
-      await processSymbol(symbol);
+      if (await processSymbol(symbol)) {
+        signalsFound += 1;
+      }
     } catch (err: any) {
       logger.error(`Error processing ${symbol}: ${err.message}`);
       await sendErrorAlert(err.message, `Signal scan: ${symbol}`).catch(() => {});
     }
   }
+
+  recordScannerRun(config.trading.symbols.length, signalsFound, getOpenTrades().length);
 }
 
-async function processSymbol(symbol: string): Promise<void> {
+async function processSymbol(symbol: string): Promise<boolean> {
   const signal = await analyzeSymbol(symbol);
-  if (!signal) return;
+  if (!signal) return false;
 
   // Risk check
   const riskCheck = await checkRisk(signal);
   if (!riskCheck.allowed) {
     logger.info(`⛔ Signal rejected for ${symbol}: ${riskCheck.reason}`);
-    return;
+    return false;
   }
 
   // Calculate position size
   signal.positionSize = await calculatePositionSize(signal);
   if (signal.positionSize <= 0) {
     logger.warn(`Position size is 0 for ${symbol}, skipping`);
-    return;
+    return false;
   }
 
   // Save signal to DB
@@ -151,6 +152,8 @@ async function processSymbol(symbol: string): Promise<void> {
     logger.error(`Failed to open trade for ${symbol}: ${err.message}`);
     await sendErrorAlert(err.message, `Order placement: ${symbol}`);
   }
+
+  return true;
 }
 
 // ─── Unhandled errors ─────────────────────────────────────────────────────────
