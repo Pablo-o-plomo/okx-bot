@@ -235,7 +235,7 @@ export function getTodayClosedTrades(): Trade[] {
     WHERE closed_at IS NOT NULL
       AND DATE(closed_at) = DATE('now')
       AND (
-        status IN ('closed_tp1', 'closed_tp2', 'closed_tp3', 'closed_sl')
+        status IN ('closed_tp1', 'closed_tp2', 'closed_tp3', 'closed_sl', 'breakeven')
         OR result = 'breakeven'
       )
     ORDER BY closed_at ASC

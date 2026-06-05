@@ -17,7 +17,7 @@ export interface DailyRiskSnapshot {
   trades: Trade[];
   isLimitReached: boolean;
   mode: 'PAPER' | 'LIVE';
-  behavior: 'Warning only' | 'Risk lock';
+  behavior: 'WARNING ONLY' | 'RISK LOCK';
 }
 
 function todayIso(): string {
@@ -31,7 +31,20 @@ function nextTradingDayIso(): string {
 }
 
 function isDailyLossPause(reason?: string): boolean {
-  return !!reason && reason.includes('Дневной лимит убытка');
+  if (!reason) return false;
+
+  const normalized = reason.toLowerCase();
+  return normalized.includes('дневной лимит убытка')
+    || normalized.includes('daily loss limit')
+    || normalized.includes('daily risk lock');
+}
+
+function isLiveMode(): boolean {
+  return config.trading.isLive;
+}
+
+function shouldLockDailyRisk(snapshot: DailyRiskSnapshot): boolean {
+  return isLiveMode() && snapshot.isLimitReached;
 }
 
 export function getDailyRiskSnapshot(): DailyRiskSnapshot {
@@ -47,7 +60,7 @@ export function getDailyRiskSnapshot(): DailyRiskSnapshot {
     trades,
     isLimitReached: dailyPnlPercent <= -config.trading.maxDailyLoss,
     mode: config.trading.isLive ? 'LIVE' : 'PAPER',
-    behavior: config.trading.isLive ? 'Risk lock' : 'Warning only',
+    behavior: isLiveMode() ? 'RISK LOCK' : 'WARNING ONLY',
   };
 }
 
@@ -63,7 +76,7 @@ function syncDailyRiskState(): DailyRiskSnapshot {
     updates.consecutiveLosses = 0;
   }
 
-  if (isDailyLossPause(state.pauseReason) && (!config.trading.isLive || !snapshot.isLimitReached || state.lastDailyReset !== snapshot.tradingDay)) {
+  if (isDailyLossPause(state.pauseReason) && (!shouldLockDailyRisk(snapshot) || state.lastDailyReset !== snapshot.tradingDay)) {
     updates.isPaused = false;
     updates.pausedUntil = undefined;
     updates.pauseReason = undefined;
@@ -94,8 +107,8 @@ export async function checkRisk(signal: Signal): Promise<RiskCheck> {
 
   // 2. Daily net PnL limit from today's closed trades only
   if (dailyRisk.isLimitReached) {
-    if (!config.trading.isLive) {
-      logger.warn(`⚠️ Daily loss limit exceeded. Mode: PAPER. Current daily PnL: ${dailyRisk.dailyPnlPercent.toFixed(2)}%. Trading continues for learning purposes.`);
+    if (!isLiveMode()) {
+      logger.warn(`PAPER mode: daily loss limit exceeded, trading continues for learning. Daily PnL: ${dailyRisk.dailyPnlPercent.toFixed(2)}%.`);
     } else {
       const pausedUntil = nextTradingDayIso();
       updateBotState({
@@ -185,7 +198,7 @@ export function recordTradeResult(pnlPercent: number): void {
   };
 
   if (dailyRisk.isLimitReached) {
-    if (config.trading.isLive) {
+    if (isLiveMode()) {
       const pausedUntil = nextTradingDayIso();
       updates.isPaused = true;
       updates.pausedUntil = pausedUntil;
@@ -195,7 +208,7 @@ export function recordTradeResult(pnlPercent: number): void {
       updates.isPaused = isDailyLossPause(state.pauseReason) ? false : state.isPaused;
       updates.pausedUntil = isDailyLossPause(state.pauseReason) ? undefined : state.pausedUntil;
       updates.pauseReason = isDailyLossPause(state.pauseReason) ? undefined : state.pauseReason;
-      logger.warn(`Risk warning activated. Daily PnL: ${dailyRisk.dailyPnlPercent.toFixed(2)}%. Mode: PAPER. Trading continues for learning purposes.`);
+      logger.warn(`PAPER mode: daily loss limit exceeded, trading continues for learning. Daily PnL: ${dailyRisk.dailyPnlPercent.toFixed(2)}%.`);
     }
   } else if (isDailyLossPause(state.pauseReason)) {
     updates.isPaused = false;

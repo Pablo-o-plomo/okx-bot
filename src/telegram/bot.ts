@@ -305,8 +305,8 @@ Closed Trades Today: <b>${dailyRisk.closedTradesCount}</b>
 Risk Lock: <b>${riskLockOn ? 'ON' : 'OFF'}</b>
 Paused Until: <b>${state.pausedUntil ?? '—'}</b>
 Daily Limit: <b>${config.trading.maxDailyLoss}%</b>
-Behavior: <b>${dailyRisk.behavior}</b>
-Reason: <b>${state.pauseReason ?? '—'}</b>
+Daily limit behavior: <b>${dailyRisk.behavior}</b>
+Reason: <b>${riskLockOn ? (state.pauseReason ?? '—') : '—'}</b>
 
 Trades:
 ${tradeLines}
