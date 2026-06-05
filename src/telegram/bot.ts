@@ -20,7 +20,7 @@ import {
   getLastNTrades,
 } from '../database/db';
 import { getAccountBalance } from '../okx/trading';
-import { pauseBot, resumeBot } from '../strategy/riskManager';
+import { getDailyRiskSnapshot, pauseBot, resetDailyRiskLock, resumeBot } from '../strategy/riskManager';
 import { generateDailyReport } from '../reports/dailyReport';
 import { generateLearningReport } from '../reports/learningReport';
 import type { Signal, Trade } from '../database/models';
@@ -126,6 +126,12 @@ function registerCommands(): void {
   bot.onText(/\/risk/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
     await sendRisk(msg.chat.id.toString());
+  });
+
+  // /reset-risk
+  bot.onText(/\/reset-risk/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendResetRisk(msg.chat.id.toString());
   });
 
   // /report
@@ -282,14 +288,41 @@ Execution: <b>${config.trading.isLive ? 'Real orders' : 'Paper only'}</b>
 
 async function sendRisk(chatId: string): Promise<void> {
   const state = getBotState();
+  const dailyRisk = getDailyRiskSnapshot();
+  const tradeLines = dailyRisk.trades.length > 0
+    ? dailyRisk.trades.slice(0, 5).map(trade =>
+        `• #${trade.id} ${trade.symbol} ${trade.direction} ${trade.pnlPercent && trade.pnlPercent >= 0 ? '+' : ''}${(trade.pnlPercent ?? 0).toFixed(2)}%`
+      ).join('\n')
+    : '—';
+
   await send(chatId, `
 ⚙️ <b>RISK</b>
 
-Per trade: <b>${config.trading.riskPerTrade}%</b>
-Daily limit: <b>${config.trading.maxDailyLoss}%</b>
-Max positions: <b>${config.trading.maxOpenPositions}</b>
-Loss streak: <b>${state.consecutiveLosses} / ${config.trading.maxLossesInRow}</b>
-Today loss: <b>${state.dailyLossPercent.toFixed(2)}%</b>
+Daily PnL: <b>${dailyRisk.dailyPnlPercent >= 0 ? '+' : ''}${dailyRisk.dailyPnlPercent.toFixed(2)}%</b>
+Closed today: <b>${dailyRisk.closedTradesCount}</b>
+Loss limit: <b>${config.trading.maxDailyLoss}%</b>
+Lock reason: <b>${state.pauseReason ?? '—'}</b>
+Paused until: <b>${state.pausedUntil ?? '—'}</b>
+
+Trades:
+${tradeLines}
+`.trim(), true);
+}
+
+async function sendResetRisk(chatId: string): Promise<void> {
+  if (config.trading.isLive) {
+    await send(chatId, '🧯 <b>Reset unavailable</b>\n\nPaper mode only.', true);
+    return;
+  }
+
+  const snapshot = resetDailyRiskLock();
+  await send(chatId, `
+🧯 <b>RISK RESET</b>
+
+Mode: <b>PAPER</b>
+Daily lock: <b>cleared</b>
+Closed today: <b>${snapshot.closedTradesCount}</b>
+Realized PnL: <b>${snapshot.dailyPnlPercent >= 0 ? '+' : ''}${snapshot.dailyPnlPercent.toFixed(2)}%</b>
 `.trim(), true);
 }
 

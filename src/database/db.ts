@@ -226,9 +226,16 @@ export function getLastNTrades(n: number): Trade[] {
 }
 
 export function getTodayTrades(): Trade[] {
+  return getTodayClosedTrades();
+}
+
+export function getTodayClosedTrades(): Trade[] {
   const rows = db.prepare(`
-    SELECT * FROM trades 
-    WHERE DATE(opened_at) = DATE('now') AND status != 'open'
+    SELECT * FROM trades
+    WHERE status != 'open'
+      AND closed_at IS NOT NULL
+      AND DATE(closed_at) = DATE('now')
+    ORDER BY closed_at ASC
   `).all() as any[];
   return rows.map(rowToTrade);
 }
