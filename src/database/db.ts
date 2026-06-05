@@ -205,6 +205,13 @@ export function closeTrade(
   );
 }
 
+export function updateTradeStopLoss(id: number, stopLoss: number): void {
+  db.prepare(`
+    UPDATE trades SET stop_loss = ?
+    WHERE id = ? AND status = 'open'
+  `).run(stopLoss, id);
+}
+
 export function getOpenTrades(): Trade[] {
   const rows = db.prepare("SELECT * FROM trades WHERE status = 'open'").all() as any[];
   return rows.map(rowToTrade);

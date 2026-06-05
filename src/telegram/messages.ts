@@ -166,7 +166,7 @@ Status: <b>${signalStatus(signal.status)}</b>
 }
 
 // ─── TP UPDATE ────────────────────────────────────────────────────────────────
-export function formatTpUpdateMessage(trade: Trade, tpLevel: number, currentPrice: number): string {
+export function formatTpUpdateMessage(trade: Trade, tpLevel: number, currentPrice: number, stopMovedToBreakeven = false): string {
   const pnlPercent = tradePnlPercent(trade, currentPrice);
   const pnlUsdt = (pnlPercent / 100) * trade.positionSize * trade.entryPrice;
 
@@ -178,7 +178,7 @@ ${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
 <b>${signed(pnlPercent, 1)}%</b>
 <b>${signed(pnlUsdt, 1)} USDT</b>
 
-Position still active
+Position still active${stopMovedToBreakeven ? '\nSL moved to breakeven' : ''}
 `.trim();
 }
 

@@ -397,8 +397,8 @@ export async function broadcastTradeClosed(trade: Trade, improvements?: string[]
   await send(config.telegram.chatId, formatTradeClosedMessage(trade, improvements));
 }
 
-export async function broadcastTpHit(trade: Trade, level: number, price: number): Promise<void> {
-  const text = formatTpUpdateMessage(trade, level, price);
+export async function broadcastTpHit(trade: Trade, level: number, price: number, stopMovedToBreakeven = false): Promise<void> {
+  const text = formatTpUpdateMessage(trade, level, price, stopMovedToBreakeven);
   await send(config.telegram.chatId, text);
 }
 
