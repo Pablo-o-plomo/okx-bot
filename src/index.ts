@@ -88,7 +88,9 @@ async function runSignalScan(): Promise<void> {
 
   for (const symbol of config.trading.symbols) {
     try {
-      await processSymbol(symbol);
+      if (await processSymbol(symbol)) {
+        signalsFound += 1;
+      }
     } catch (err: any) {
       logger.error(`Error processing ${symbol}: ${err.message}`);
       await sendErrorAlert(err.message, `Signal scan: ${symbol}`).catch(() => {});
@@ -103,22 +105,22 @@ async function runSignalScan(): Promise<void> {
   );
 }
 
-async function processSymbol(symbol: string): Promise<void> {
+async function processSymbol(symbol: string): Promise<boolean> {
   const signal = await analyzeSymbol(symbol);
-  if (!signal) return;
+  if (!signal) return false;
 
   // Risk check
   const riskCheck = await checkRisk(signal);
   if (!riskCheck.allowed) {
     logger.info(`⛔ Signal rejected for ${symbol}: ${riskCheck.reason}`);
-    return;
+    return false;
   }
 
   // Calculate position size
   signal.positionSize = await calculatePositionSize(signal);
   if (signal.positionSize <= 0) {
     logger.warn(`Position size is 0 for ${symbol}, skipping`);
-    return;
+    return false;
   }
 
   // Save signal to DB
