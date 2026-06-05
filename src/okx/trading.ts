@@ -89,6 +89,44 @@ async function liveOrder(signal: Signal): Promise<OrderResult> {
 }
 
 /**
+ * Move stop loss to breakeven (live or paper).
+ */
+export async function moveStopLossToBreakeven(
+  symbol: string,
+  direction: 'LONG' | 'SHORT',
+  size: number,
+  stopLoss: number,
+): Promise<OrderResult> {
+  if (!config.trading.isLive) {
+    const orderId = `PAPER-SL-BE-${paperOrderCounter++}`;
+    logger.info(`📄 Paper SL moved to breakeven: ${symbol} @ ${stopLoss}`);
+    return { orderId, symbol, side: direction === 'LONG' ? 'sell' : 'buy', price: stopLoss, size, status: 'updated', paper: true };
+  }
+
+  const side = direction === 'LONG' ? 'sell' : 'buy';
+  const result = await okxClient.privatePost<any[]>('/api/v5/trade/order-algo', {
+    instId: symbol,
+    tdMode: symbol.endsWith('-SWAP') ? 'cross' : 'cash',
+    side,
+    ordType: 'conditional',
+    sz: String(size),
+    slTriggerPx: String(stopLoss),
+    slOrdPx: '-1',
+    reduceOnly: true,
+  });
+
+  return {
+    orderId: result[0].algoId ?? result[0].ordId,
+    symbol,
+    side,
+    price: stopLoss,
+    size,
+    status: result[0].sCode === '0' ? 'updated' : 'failed',
+    paper: false,
+  };
+}
+
+/**
  * Close a position (live or paper).
  */
 export async function closePosition(
