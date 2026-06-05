@@ -73,12 +73,19 @@ function tpStatus(hit?: boolean): string {
   return hit ? '✅' : '⏳';
 }
 
+function isStopMovedToBreakeven(trade: Trade): boolean {
+  return trade.stopLoss === trade.entryPrice || !!trade.tp2Hit;
+}
+
 function tradeTpHits(trade: Trade): { tp1: boolean; tp2: boolean; tp3: boolean } {
-  const breakevenStop = trade.stopLoss === trade.entryPrice;
   const tp3 = !!trade.tp3Hit;
-  const tp2 = !!trade.tp2Hit || tp3 || breakevenStop;
+  const tp2 = !!trade.tp2Hit || tp3 || isStopMovedToBreakeven(trade);
   const tp1 = !!trade.tp1Hit || tp2;
   return { tp1, tp2, tp3 };
+}
+
+function tpProgress(hits: { tp1: boolean; tp2: boolean; tp3: boolean }): number {
+  return [hits.tp1, hits.tp2, hits.tp3].filter(Boolean).length;
 }
 
 function riskLabel(trade: Trade): 'LOW' | 'MEDIUM' | 'HIGH' {
@@ -169,16 +176,20 @@ ${reasons.length > 0 ? `\nSetup:\n${reasons.map(reason => `• ${reason}`).join(
 export function formatPositionsMessage(trades: Trade[]): string {
   return trades.map(trade => {
     const hits = tradeTpHits(trade);
+    const stopMovedToBreakeven = isStopMovedToBreakeven(trade);
     return `
 ${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
 
 Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
-SL: <b>${formatPrice(trade.symbol, trade.stopLoss)}</b>
+SL: <b>${stopMovedToBreakeven ? 'BE' : formatPrice(trade.symbol, trade.stopLoss)}</b>
+${stopMovedToBreakeven ? '\n🔒 Stop moved to breakeven' : ''}
 
 TP:
 ${tpStatus(hits.tp1)} TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>
 ${tpStatus(hits.tp2)} TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>
 ${tpStatus(hits.tp3)} TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>
+
+TP Progress: <b>${tpProgress(hits)} / 3</b>
 
 Risk: <b>${riskLabel(trade)}</b>
 `.trim();
