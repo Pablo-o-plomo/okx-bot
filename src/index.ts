@@ -88,7 +88,9 @@ async function runSignalScan(): Promise<void> {
 
   for (const symbol of config.trading.symbols) {
     try {
-      await processSymbol(symbol);
+      if (await processSymbol(symbol)) {
+        signalsFound += 1;
+      }
     } catch (err: any) {
       logger.error(`Error processing ${symbol}: ${err.message}`);
       await sendErrorAlert(err.message, `Signal scan: ${symbol}`).catch(() => {});
@@ -159,6 +161,7 @@ async function processSymbol(symbol: string): Promise<boolean> {
     await sendErrorAlert(err.message, `Order placement: ${symbol}`);
     return false;
   }
+
 }
 
 // ─── Unhandled errors ─────────────────────────────────────────────────────────
