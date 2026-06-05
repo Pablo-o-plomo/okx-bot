@@ -289,20 +289,24 @@ Execution: <b>${config.trading.isLive ? 'Real orders' : 'Paper only'}</b>
 async function sendRisk(chatId: string): Promise<void> {
   const state = getBotState();
   const dailyRisk = getDailyRiskSnapshot();
+  const riskLockOn = config.trading.isLive && dailyRisk.isLimitReached && state.isPaused;
   const tradeLines = dailyRisk.trades.length > 0
-    ? dailyRisk.trades.slice(0, 5).map(trade =>
+    ? dailyRisk.trades.slice(0, 4).map(trade =>
         `• #${trade.id} ${trade.symbol} ${trade.direction} ${trade.pnlPercent && trade.pnlPercent >= 0 ? '+' : ''}${(trade.pnlPercent ?? 0).toFixed(2)}%`
       ).join('\n')
     : '—';
 
   await send(chatId, `
-⚙️ <b>RISK</b>
+📊 <b>Risk Status</b>
 
-Daily PnL: <b>${dailyRisk.dailyPnlPercent >= 0 ? '+' : ''}${dailyRisk.dailyPnlPercent.toFixed(2)}%</b>
-Closed today: <b>${dailyRisk.closedTradesCount}</b>
-Loss limit: <b>${config.trading.maxDailyLoss}%</b>
-Lock reason: <b>${state.pauseReason ?? '—'}</b>
-Paused until: <b>${state.pausedUntil ?? '—'}</b>
+Mode: <b>${dailyRisk.mode}</b>
+Daily Net PnL: <b>${dailyRisk.dailyPnlPercent >= 0 ? '+' : ''}${dailyRisk.dailyPnlPercent.toFixed(2)}%</b>
+Closed Trades Today: <b>${dailyRisk.closedTradesCount}</b>
+Risk Lock: <b>${riskLockOn ? 'ON' : 'OFF'}</b>
+Paused Until: <b>${state.pausedUntil ?? '—'}</b>
+Daily Limit: <b>${config.trading.maxDailyLoss}%</b>
+Behavior: <b>${dailyRisk.behavior}</b>
+Reason: <b>${state.pauseReason ?? '—'}</b>
 
 Trades:
 ${tradeLines}
