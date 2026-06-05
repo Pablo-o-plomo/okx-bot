@@ -205,6 +205,13 @@ export function closeTrade(
   );
 }
 
+export function updateTradeStopLoss(id: number, stopLoss: number): void {
+  db.prepare(`
+    UPDATE trades SET stop_loss = ?
+    WHERE id = ? AND status = 'open'
+  `).run(stopLoss, id);
+}
+
 export function getOpenTrades(): Trade[] {
   const rows = db.prepare("SELECT * FROM trades WHERE status = 'open'").all() as any[];
   return rows.map(rowToTrade);
@@ -226,9 +233,19 @@ export function getLastNTrades(n: number): Trade[] {
 }
 
 export function getTodayTrades(): Trade[] {
+  return getTodayClosedTrades();
+}
+
+export function getTodayClosedTrades(): Trade[] {
   const rows = db.prepare(`
-    SELECT * FROM trades 
-    WHERE DATE(opened_at) = DATE('now') AND status != 'open'
+    SELECT * FROM trades
+    WHERE closed_at IS NOT NULL
+      AND DATE(closed_at) = DATE('now')
+      AND (
+        status IN ('closed_tp1', 'closed_tp2', 'closed_tp3', 'closed_sl', 'breakeven')
+        OR result = 'breakeven'
+      )
+    ORDER BY closed_at ASC
   `).all() as any[];
   return rows.map(rowToTrade);
 }
