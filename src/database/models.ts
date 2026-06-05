@@ -50,6 +50,9 @@ export interface Trade {
   takeProfit1: number;
   takeProfit2: number;
   takeProfit3: number;
+  tp1Hit?: boolean;
+  tp2Hit?: boolean;
+  tp3Hit?: boolean;
   positionSize: number;
   leverage: number;
   status: TradeStatus;
