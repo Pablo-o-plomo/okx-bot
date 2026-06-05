@@ -22,6 +22,7 @@ export function initDb(): void {
   db.pragma('foreign_keys = ON');
 
   createTables();
+  migrateTables();
   logger.info(`📦 Database initialized: ${dbPath}`);
 }
 
@@ -60,6 +61,22 @@ function createTables(): void {
       take_profit1 REAL NOT NULL,
       take_profit2 REAL NOT NULL,
       take_profit3 REAL NOT NULL,
+      tp1_hit INTEGER NOT NULL DEFAULT 0,
+      tp2_hit INTEGER NOT NULL DEFAULT 0,
+      tp3_hit INTEGER NOT NULL DEFAULT 0,
+      tp1_hit_at TEXT,
+      tp2_hit_at TEXT,
+      tp3_hit_at TEXT,
+      max_profit_percent REAL NOT NULL DEFAULT 0,
+      max_drawdown_percent REAL NOT NULL DEFAULT 0,
+      holding_time_minutes INTEGER,
+      market_phase TEXT NOT NULL DEFAULT 'UNKNOWN',
+      signal_confidence REAL NOT NULL DEFAULT 0,
+      scanner_score REAL NOT NULL DEFAULT 0,
+      volume_ratio REAL NOT NULL DEFAULT 0,
+      atr_at_entry REAL NOT NULL DEFAULT 0,
+      rsi_at_entry REAL NOT NULL DEFAULT 0,
+      trend_strength REAL NOT NULL DEFAULT 0,
       position_size REAL NOT NULL,
       leverage REAL NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'open',
@@ -110,6 +127,32 @@ function createTables(): void {
 
     INSERT OR IGNORE INTO bot_state (id) VALUES (1);
   `);
+}
+
+function migrateTables(): void {
+  addColumnIfMissing('trades', 'tp1_hit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'tp2_hit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'tp3_hit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'tp1_hit_at', 'TEXT');
+  addColumnIfMissing('trades', 'tp2_hit_at', 'TEXT');
+  addColumnIfMissing('trades', 'tp3_hit_at', 'TEXT');
+  addColumnIfMissing('trades', 'max_profit_percent', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'max_drawdown_percent', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'holding_time_minutes', 'INTEGER');
+  addColumnIfMissing('trades', 'market_phase', "TEXT NOT NULL DEFAULT 'UNKNOWN'");
+  addColumnIfMissing('trades', 'signal_confidence', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'scanner_score', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'volume_ratio', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'atr_at_entry', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'rsi_at_entry', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'trend_strength', 'REAL NOT NULL DEFAULT 0');
+}
+
+function addColumnIfMissing(table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some(col => col.name === column)) {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  }
 }
 
 // ─── Signals ──────────────────────────────────────────────────────────────────
@@ -166,8 +209,9 @@ export function saveTrade(trade: Trade): number {
   const stmt = db.prepare(`
     INSERT INTO trades (signal_id, symbol, direction, entry_price, stop_loss,
       take_profit1, take_profit2, take_profit3, position_size, leverage,
-      status, entry_reasons, indicators_at_entry)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      status, entry_reasons, indicators_at_entry, market_phase, signal_confidence,
+      scanner_score, volume_ratio, atr_at_entry, rsi_at_entry, trend_strength)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     trade.signalId, trade.symbol, trade.direction, trade.entryPrice,
@@ -175,6 +219,13 @@ export function saveTrade(trade: Trade): number {
     trade.positionSize, trade.leverage, trade.status,
     JSON.stringify(trade.entryReasons),
     trade.indicatorsAtEntry ? JSON.stringify(trade.indicatorsAtEntry) : null,
+    trade.marketPhase ?? 'UNKNOWN',
+    trade.signalConfidence ?? 0,
+    trade.scannerScore ?? 0,
+    trade.volumeRatio ?? 0,
+    trade.atrAtEntry ?? 0,
+    trade.rsiAtEntry ?? 0,
+    trade.trendStrength ?? 0,
   );
   return result.lastInsertRowid as number;
 }
@@ -195,6 +246,7 @@ export function closeTrade(
     UPDATE trades SET
       exit_price = ?, status = ?, result = ?, pnl_percent = ?, pnl_usdt = ?,
       exit_reason = ?, exit_analysis = ?, improvements = ?, error_tags = ?,
+      holding_time_minutes = CAST((julianday(CURRENT_TIMESTAMP) - julianday(opened_at)) * 24 * 60 AS INTEGER),
       closed_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
@@ -203,6 +255,31 @@ export function closeTrade(
     JSON.stringify(improvements), JSON.stringify(errorTags),
     id,
   );
+}
+
+export function updateTradeStopLoss(id: number, stopLoss: number): void {
+  db.prepare(`
+    UPDATE trades SET stop_loss = ?
+    WHERE id = ? AND status = 'open'
+  `).run(stopLoss, id);
+}
+
+export function updateTradeTpHit(id: number, tpLevel: 1 | 2 | 3): void {
+  const column = `tp${tpLevel}_hit`;
+  const timestampColumn = `tp${tpLevel}_hit_at`;
+  db.prepare(`
+    UPDATE trades SET ${column} = 1, ${timestampColumn} = COALESCE(${timestampColumn}, CURRENT_TIMESTAMP)
+    WHERE id = ?
+  `).run(id);
+}
+
+export function updateTradeExcursion(id: number, maxProfitPercent: number, maxDrawdownPercent: number): void {
+  db.prepare(`
+    UPDATE trades SET
+      max_profit_percent = MAX(max_profit_percent, ?),
+      max_drawdown_percent = MAX(max_drawdown_percent, ?)
+    WHERE id = ? AND status = 'open'
+  `).run(maxProfitPercent, maxDrawdownPercent, id);
 }
 
 export function getOpenTrades(): Trade[] {
@@ -226,9 +303,19 @@ export function getLastNTrades(n: number): Trade[] {
 }
 
 export function getTodayTrades(): Trade[] {
+  return getTodayClosedTrades();
+}
+
+export function getTodayClosedTrades(): Trade[] {
   const rows = db.prepare(`
-    SELECT * FROM trades 
-    WHERE DATE(opened_at) = DATE('now') AND status != 'open'
+    SELECT * FROM trades
+    WHERE closed_at IS NOT NULL
+      AND DATE(closed_at) = DATE('now')
+      AND (
+        status IN ('closed_tp1', 'closed_tp2', 'closed_tp3', 'closed_sl', 'breakeven')
+        OR result = 'breakeven'
+      )
+    ORDER BY closed_at ASC
   `).all() as any[];
   return rows.map(rowToTrade);
 }
@@ -245,6 +332,22 @@ function rowToTrade(row: any): Trade {
     takeProfit1: row.take_profit1,
     takeProfit2: row.take_profit2,
     takeProfit3: row.take_profit3,
+    tp1Hit: row.tp1_hit === 1,
+    tp2Hit: row.tp2_hit === 1,
+    tp3Hit: row.tp3_hit === 1,
+    tp1HitAt: row.tp1_hit_at ?? null,
+    tp2HitAt: row.tp2_hit_at ?? null,
+    tp3HitAt: row.tp3_hit_at ?? null,
+    maxProfitPercent: row.max_profit_percent ?? 0,
+    maxDrawdownPercent: row.max_drawdown_percent ?? 0,
+    holdingTimeMinutes: row.holding_time_minutes ?? null,
+    marketPhase: row.market_phase ?? 'UNKNOWN',
+    signalConfidence: row.signal_confidence ?? 0,
+    scannerScore: row.scanner_score ?? 0,
+    volumeRatio: row.volume_ratio ?? 0,
+    atrAtEntry: row.atr_at_entry ?? 0,
+    rsiAtEntry: row.rsi_at_entry ?? 0,
+    trendStrength: row.trend_strength ?? 0,
     positionSize: row.position_size,
     leverage: row.leverage,
     status: row.status,
