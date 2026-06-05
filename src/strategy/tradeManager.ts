@@ -1,4 +1,4 @@
-import { getOpenTrades, closeTrade, getTradeById, updateTradeStopLoss } from '../database/db';
+import { getOpenTrades, closeTrade, getTradeById, updateTradeStopLoss, updateTradeTpHit } from '../database/db';
 import { getTicker } from '../okx/market';
 import { closePosition, moveStopLossToBreakeven, updatePaperBalance } from '../okx/trading';
 import { recordTradeResult } from './riskManager';
@@ -30,7 +30,9 @@ async function checkTrade(trade: Trade): Promise<void> {
   const id = trade.id;
   if (!tpHitMap.has(id)) tpHitMap.set(id, new Set());
   const hitTPs = tpHitMap.get(id)!;
-  if (trade.stopLoss === trade.entryPrice) hitTPs.add(2);
+  if (trade.tp1Hit) hitTPs.add(1);
+  if (trade.tp2Hit || trade.stopLoss === trade.entryPrice) hitTPs.add(2);
+  if (trade.tp3Hit) hitTPs.add(3);
 
   const isLong = trade.direction === 'LONG';
 
@@ -51,6 +53,9 @@ async function checkTrade(trade: Trade): Promise<void> {
 
   if (tp3Hit && !hitTPs.has(3)) {
     hitTPs.add(3);
+    updateTradeTpHit(id, 1);
+    updateTradeTpHit(id, 2);
+    updateTradeTpHit(id, 3);
     await handleClose(trade, currentPrice, 'closed_tp3');
     tpHitMap.delete(id);
     return;
@@ -58,6 +63,10 @@ async function checkTrade(trade: Trade): Promise<void> {
 
   if (tp2Hit && !hitTPs.has(2)) {
     hitTPs.add(2);
+    updateTradeTpHit(id, 1);
+    updateTradeTpHit(id, 2);
+    trade.tp1Hit = true;
+    trade.tp2Hit = true;
     await moveStopToBreakeven(trade);
     await broadcastTpHit(trade, 2, currentPrice, true);
     logger.info(`📈 TP2 hit for ${trade.symbol} — SL moved to breakeven`);
@@ -66,6 +75,8 @@ async function checkTrade(trade: Trade): Promise<void> {
 
   if (tp1Hit && !hitTPs.has(1)) {
     hitTPs.add(1);
+    updateTradeTpHit(id, 1);
+    trade.tp1Hit = true;
     await broadcastTpHit(trade, 1, currentPrice);
     logger.info(`📈 TP1 hit for ${trade.symbol}`);
   }

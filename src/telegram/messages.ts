@@ -56,6 +56,31 @@ function signalStatus(status: string): string {
   }
 }
 
+
+function priceDigits(symbol: string): number {
+  const base = symbol.split('-')[0];
+  if (base === 'BTC') return 0;
+  if (['ETH', 'SOL'].includes(base)) return 2;
+  if (['XRP', 'DOGE', 'TON'].includes(base)) return 4;
+  return 4;
+}
+
+function formatPrice(symbol: string, price: number): string {
+  return escapeHtml(price.toFixed(priceDigits(symbol)).replace(/\.?0+$/, ''));
+}
+
+function tpStatus(hit?: boolean): string {
+  return hit ? '✅' : '⏳';
+}
+
+function tradeTpHits(trade: Trade): { tp1: boolean; tp2: boolean; tp3: boolean } {
+  const breakevenStop = trade.stopLoss === trade.entryPrice;
+  const tp3 = !!trade.tp3Hit;
+  const tp2 = !!trade.tp2Hit || tp3 || breakevenStop;
+  const tp1 = !!trade.tp1Hit || tp2;
+  return { tp1, tp2, tp3 };
+}
+
 function riskLabel(trade: Trade): 'LOW' | 'MEDIUM' | 'HIGH' {
   const distance = Math.abs(trade.entryPrice - trade.stopLoss) / trade.entryPrice;
   if (distance <= 0.01) return 'LOW';
@@ -142,18 +167,22 @@ ${reasons.length > 0 ? `\nSetup:\n${reasons.map(reason => `• ${reason}`).join(
 
 // ─── POSITIONS ────────────────────────────────────────────────────────────────
 export function formatPositionsMessage(trades: Trade[]): string {
-  return trades.map(trade => `
+  return trades.map(trade => {
+    const hits = tradeTpHits(trade);
+    return `
 ${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
 
-Entry: <b>${trade.entryPrice}</b>
-SL: <b>${trade.stopLoss}</b>
+Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
+SL: <b>${formatPrice(trade.symbol, trade.stopLoss)}</b>
 
-🎯 TP1: <b>${trade.takeProfit1}</b>
-🎯 TP2: <b>${trade.takeProfit2}</b>
-🎯 TP3: <b>${trade.takeProfit3}</b>
+TP:
+${tpStatus(hits.tp1)} TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>
+${tpStatus(hits.tp2)} TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>
+${tpStatus(hits.tp3)} TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>
 
 Risk: <b>${riskLabel(trade)}</b>
-`.trim()).join('\n\n');
+`.trim();
+  }).join('\n\n');
 }
 
 export function formatSignalsListMessage(signals: Signal[]): string {
