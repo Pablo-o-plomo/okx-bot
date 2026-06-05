@@ -22,6 +22,7 @@ export function initDb(): void {
   db.pragma('foreign_keys = ON');
 
   createTables();
+  migrateTables();
   logger.info(`📦 Database initialized: ${dbPath}`);
 }
 
@@ -60,6 +61,9 @@ function createTables(): void {
       take_profit1 REAL NOT NULL,
       take_profit2 REAL NOT NULL,
       take_profit3 REAL NOT NULL,
+      tp1_hit INTEGER NOT NULL DEFAULT 0,
+      tp2_hit INTEGER NOT NULL DEFAULT 0,
+      tp3_hit INTEGER NOT NULL DEFAULT 0,
       position_size REAL NOT NULL,
       leverage REAL NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'open',
@@ -110,6 +114,19 @@ function createTables(): void {
 
     INSERT OR IGNORE INTO bot_state (id) VALUES (1);
   `);
+}
+
+function migrateTables(): void {
+  addColumnIfMissing('trades', 'tp1_hit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'tp2_hit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'tp3_hit', 'INTEGER NOT NULL DEFAULT 0');
+}
+
+function addColumnIfMissing(table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some(col => col.name === column)) {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  }
 }
 
 // ─── Signals ──────────────────────────────────────────────────────────────────
@@ -205,6 +222,21 @@ export function closeTrade(
   );
 }
 
+export function updateTradeStopLoss(id: number, stopLoss: number): void {
+  db.prepare(`
+    UPDATE trades SET stop_loss = ?
+    WHERE id = ? AND status = 'open'
+  `).run(stopLoss, id);
+}
+
+export function updateTradeTpHit(id: number, tpLevel: 1 | 2 | 3): void {
+  const column = `tp${tpLevel}_hit`;
+  db.prepare(`
+    UPDATE trades SET ${column} = 1
+    WHERE id = ?
+  `).run(id);
+}
+
 export function getOpenTrades(): Trade[] {
   const rows = db.prepare("SELECT * FROM trades WHERE status = 'open'").all() as any[];
   return rows.map(rowToTrade);
@@ -226,9 +258,19 @@ export function getLastNTrades(n: number): Trade[] {
 }
 
 export function getTodayTrades(): Trade[] {
+  return getTodayClosedTrades();
+}
+
+export function getTodayClosedTrades(): Trade[] {
   const rows = db.prepare(`
-    SELECT * FROM trades 
-    WHERE DATE(opened_at) = DATE('now') AND status != 'open'
+    SELECT * FROM trades
+    WHERE closed_at IS NOT NULL
+      AND DATE(closed_at) = DATE('now')
+      AND (
+        status IN ('closed_tp1', 'closed_tp2', 'closed_tp3', 'closed_sl', 'breakeven')
+        OR result = 'breakeven'
+      )
+    ORDER BY closed_at ASC
   `).all() as any[];
   return rows.map(rowToTrade);
 }
@@ -245,6 +287,9 @@ function rowToTrade(row: any): Trade {
     takeProfit1: row.take_profit1,
     takeProfit2: row.take_profit2,
     takeProfit3: row.take_profit3,
+    tp1Hit: row.tp1_hit === 1,
+    tp2Hit: row.tp2_hit === 1,
+    tp3Hit: row.tp3_hit === 1,
     positionSize: row.position_size,
     leverage: row.leverage,
     status: row.status,
