@@ -4,8 +4,8 @@ import path from 'path';
 import cron from 'node-cron';
 import express from 'express';
 import { config } from './config';
-import { initDb, getOpenTrades, getLastNTrades } from './database/db';
-import { initTelegramBot, broadcastSignal, broadcastMessage, broadcastTradeClosed, broadcastTpHit, sendErrorAlert } from './telegram/bot';
+import { initDb, getOpenTrades, getLastNTrades, getRecentSignals } from './database/db';
+import { initTelegramBot, broadcastSignal, sendErrorAlert, recordScannerRun, broadcastScannerHeartbeat } from './telegram/bot';
 import { analyzeSymbol } from './strategy/signalEngine';
 import { checkRisk, calculatePositionSize } from './strategy/riskManager';
 import { monitorOpenTrades } from './strategy/tradeManager';
@@ -40,16 +40,6 @@ async function bootstrap(): Promise<void> {
   // 4. Start schedulers
   setupSchedulers();
 
-  await broadcastMessage(`
-🤖 <b>OKX Trading Bot запущен</b>
-
-Режим: <b>${config.trading.isLive ? '🔴 LIVE TRADING' : '📄 PAPER TRADING'}</b>
-Символы: ${config.trading.symbols.join(', ')}
-Тайм-фреймы: ${config.trading.timeframes.join(', ')}
-
-Бот начинает анализ рынка...
-  `.trim());
-
   logger.info('✅ Bot fully initialized');
 }
 
@@ -83,12 +73,19 @@ function setupSchedulers(): void {
     }
   });
 
+  // Premium feed heartbeat — every 30 minutes
+  cron.schedule('*/30 * * * *', async () => {
+    await broadcastScannerHeartbeat();
+  });
+
   logger.info('⏰ Schedulers started');
 }
 
 // ─── Signal Scan ──────────────────────────────────────────────────────────────
 
 async function runSignalScan(): Promise<void> {
+  const signalsBefore = getRecentSignals(100).length;
+
   for (const symbol of config.trading.symbols) {
     try {
       await processSymbol(symbol);
@@ -97,6 +94,13 @@ async function runSignalScan(): Promise<void> {
       await sendErrorAlert(err.message, `Signal scan: ${symbol}`).catch(() => {});
     }
   }
+
+  const signalsAfter = getRecentSignals(100).length;
+  recordScannerRun(
+    config.trading.symbols.length,
+    Math.max(signalsAfter - signalsBefore, 0),
+    getOpenTrades().length,
+  );
 }
 
 async function processSymbol(symbol: string): Promise<void> {
@@ -151,6 +155,7 @@ async function processSymbol(symbol: string): Promise<void> {
     logger.error(`Failed to open trade for ${symbol}: ${err.message}`);
     await sendErrorAlert(err.message, `Order placement: ${symbol}`);
   }
+
 }
 
 // ─── Unhandled errors ─────────────────────────────────────────────────────────
