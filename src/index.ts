@@ -98,9 +98,11 @@ async function runSignalScan(): Promise<void> {
   }
 
   const signalsAfter = getRecentSignals(100).length;
+  const newSignalsFound = Math.max(signalsAfter - signalsBefore, 0);
+
   recordScannerRun(
     config.trading.symbols.length,
-    Math.max(signalsAfter - signalsBefore, 0),
+    newSignalsFound,
     getOpenTrades().length,
   );
 }
@@ -153,9 +155,11 @@ async function processSymbol(symbol: string): Promise<boolean> {
     });
 
     logger.info(`✅ Trade opened: ${signal.direction} ${signal.symbol} @ ${signal.entryPrice}`);
+    return true;
   } catch (err: any) {
     logger.error(`Failed to open trade for ${symbol}: ${err.message}`);
     await sendErrorAlert(err.message, `Order placement: ${symbol}`);
+    return false;
   }
 
 }
