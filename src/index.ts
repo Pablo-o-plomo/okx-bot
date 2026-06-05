@@ -14,6 +14,7 @@ import { placeOrder } from './okx/trading';
 import { sendDailyReport } from './reports/dailyReport';
 import { runLearningAnalysis } from './reports/learningReport';
 import { logger } from './utils/logger';
+import type { IndicatorSnapshot, MarketPhase } from './database/models';
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
 
@@ -152,6 +153,13 @@ async function processSymbol(symbol: string): Promise<boolean> {
       status: 'open',
       entryReasons: signal.reasons,
       indicatorsAtEntry: signal.indicators,
+      marketPhase: detectMarketPhase(signal.indicators),
+      signalConfidence: signal.confidence,
+      scannerScore: signal.confidence,
+      volumeRatio: getVolumeRatio(signal.indicators),
+      atrAtEntry: signal.indicators?.atr ?? 0,
+      rsiAtEntry: signal.indicators?.rsi ?? 0,
+      trendStrength: getTrendStrength(signal.indicators),
     });
 
     logger.info(`✅ Trade opened: ${signal.direction} ${signal.symbol} @ ${signal.entryPrice}`);
@@ -162,6 +170,33 @@ async function processSymbol(symbol: string): Promise<boolean> {
     return false;
   }
 
+}
+
+
+function detectMarketPhase(indicators?: IndicatorSnapshot): MarketPhase {
+  if (!indicators || !indicators.price) return 'UNKNOWN';
+
+  const atrRatio = indicators.atr / indicators.price;
+  const volumeRatio = getVolumeRatio({ ...indicators });
+
+  if (atrRatio > 0.035) return 'HIGH_VOLATILITY';
+  if (volumeRatio >= 1.5 && Math.abs(indicators.macdHistogram) > 0) return 'BREAKOUT';
+  if (indicators.trend === 'bullish') return 'TREND_UP';
+  if (indicators.trend === 'bearish') return 'TREND_DOWN';
+  if (indicators.trend === 'neutral') return 'RANGE';
+
+  return 'UNKNOWN';
+}
+
+function getVolumeRatio(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.volumeAvg) return 0;
+  return parseFloat((indicators.volumeCurrent / indicators.volumeAvg).toFixed(4));
+}
+
+function getTrendStrength(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.price) return 0;
+  const emaSpread = Math.abs(indicators.ema20 - indicators.ema200) / indicators.price;
+  return parseFloat((emaSpread * 100).toFixed(4));
 }
 
 // ─── Unhandled errors ─────────────────────────────────────────────────────────

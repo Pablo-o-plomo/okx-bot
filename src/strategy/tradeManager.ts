@@ -1,4 +1,4 @@
-import { getOpenTrades, closeTrade, getTradeById, updateTradeStopLoss, updateTradeTpHit } from '../database/db';
+import { getOpenTrades, closeTrade, getTradeById, updateTradeExcursion, updateTradeStopLoss, updateTradeTpHit } from '../database/db';
 import { getTicker } from '../okx/market';
 import { closePosition, moveStopLossToBreakeven, updatePaperBalance } from '../okx/trading';
 import { recordTradeResult } from './riskManager';
@@ -35,6 +35,7 @@ async function checkTrade(trade: Trade): Promise<void> {
   if (trade.tp3Hit) hitTPs.add(3);
 
   const isLong = trade.direction === 'LONG';
+  updateTradeLifeMetrics(trade, currentPrice);
 
   // ── Check Stop Loss ──
   const slHit = isLong
@@ -80,6 +81,22 @@ async function checkTrade(trade: Trade): Promise<void> {
     await broadcastTpHit(trade, 1, currentPrice);
     logger.info(`📈 TP1 hit for ${trade.symbol}`);
   }
+}
+
+function updateTradeLifeMetrics(trade: Trade, currentPrice: number): void {
+  if (!trade.id) return;
+
+  const pnlPercent = trade.direction === 'LONG'
+    ? ((currentPrice - trade.entryPrice) / trade.entryPrice) * 100 * trade.leverage
+    : ((trade.entryPrice - currentPrice) / trade.entryPrice) * 100 * trade.leverage;
+
+  const maxProfitPercent = Math.max(pnlPercent, 0);
+  const maxDrawdownPercent = Math.max(-pnlPercent, 0);
+  updateTradeExcursion(
+    trade.id,
+    parseFloat(maxProfitPercent.toFixed(4)),
+    parseFloat(maxDrawdownPercent.toFixed(4)),
+  );
 }
 
 async function moveStopToBreakeven(trade: Trade): Promise<void> {

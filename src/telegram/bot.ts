@@ -11,6 +11,7 @@ import {
   formatPositionsMessage,
   formatSignalsListMessage,
   formatLearningInProgressMessage,
+  formatLearningDashboard,
   formatHeartbeatMessage,
 } from './messages';
 import {
@@ -22,7 +23,7 @@ import {
 import { getAccountBalance } from '../okx/trading';
 import { getDailyRiskSnapshot, pauseBot, resetDailyRiskLock, resumeBot } from '../strategy/riskManager';
 import { generateDailyReport } from '../reports/dailyReport';
-import { generateLearningReport } from '../reports/learningReport';
+import { generateLearningDashboard, generateLearningReport } from '../reports/learningReport';
 import type { Signal, Trade } from '../database/models';
 
 let bot: TelegramBot;
@@ -71,6 +72,7 @@ const MAIN_MENU_KEYBOARD: TelegramBot.ReplyKeyboardMarkup = {
     [{ text: '▶️ Возобновить' }, { text: '📦 Позиции' }],
     [{ text: '📈 Сигналы' }, { text: '📋 Отчет' }],
     [{ text: '⚙️ Риск' }, { text: '🧠 Анализ' }],
+    [{ text: '🧠 Learning' }],
   ],
   resize_keyboard: true,
   is_persistent: true,
@@ -152,6 +154,12 @@ function registerCommands(): void {
     await sendAnalyze(msg.chat.id.toString());
   });
 
+  // /learning
+  bot.onText(/\/learning/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendLearning(msg.chat.id.toString());
+  });
+
   // Reply keyboard buttons
   bot.onText(/^📊 Статус$/, async (msg) => {
     await sendStatus(msg.chat.id.toString());
@@ -189,6 +197,11 @@ function registerCommands(): void {
   bot.onText(/^🧠 Анализ$/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
     await sendAnalyze(msg.chat.id.toString());
+  });
+
+  bot.onText(/^🧠 Learning$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendLearning(msg.chat.id.toString());
   });
 
   // Handle polling errors gracefully
@@ -369,6 +382,16 @@ async function sendAnalyze(chatId: string): Promise<void> {
   } catch (err: any) {
     logger.error(`AI analysis error: ${err.message}`);
     await send(chatId, '🧠 <b>AI unavailable</b>\n\nTry again later.', true);
+  }
+}
+
+async function sendLearning(chatId: string): Promise<void> {
+  try {
+    const dashboard = generateLearningDashboard(100);
+    await send(chatId, formatLearningDashboard(dashboard), true);
+  } catch (err: any) {
+    logger.error(`Learning dashboard error: ${err.message}`);
+    await send(chatId, '🧠 <b>Learning unavailable</b>\n\nTry again later.', true);
   }
 }
 

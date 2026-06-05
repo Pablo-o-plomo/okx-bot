@@ -1,4 +1,4 @@
-import type { Signal, Trade, AnalysisReport, Direction } from '../database/models';
+import type { Signal, Trade, AnalysisReport, Direction, LearningDashboard } from '../database/models';
 
 interface StatusMessageInput {
   mode: 'PAPER' | 'LIVE';
@@ -262,10 +262,11 @@ P&L: <b>${signed(totalPnl)}%</b>
 
 // ─── Learning Report ──────────────────────────────────────────────────────────
 export function formatLearningReport(report: AnalysisReport): string {
-  const topError = report.frequentErrors[0] ? cleanReason(report.frequentErrors[0]) : 'No recurring error';
-  const topRecommendation = report.recommendations[0] ? cleanReason(report.recommendations[0]) : 'Keep current rules';
-
-  return `
+  const learning = report.learning;
+  if (!learning) {
+    const topError = report.frequentErrors[0] ? cleanReason(report.frequentErrors[0]) : 'No recurring error';
+    const topRecommendation = report.recommendations[0] ? cleanReason(report.recommendations[0]) : 'Keep current rules';
+    return `
 🧠 <b>AI LEARNING</b>
 
 Trades: <b>${report.totalTrades}</b>
@@ -278,6 +279,113 @@ ${topError}
 AI fix:
 ${topRecommendation}
 `.trim();
+  }
+
+  const bestSetupLines = learning.bestSetups.length > 0
+    ? learning.bestSetups.slice(0, 2).map(setup => `${escapeHtml(setup.name)}\nWinrate: <b>${setup.winRate.toFixed(0)}%</b>`).join('\n\n')
+    : 'not enough data';
+  const worstSetupLines = learning.worstSetups.length > 0
+    ? learning.worstSetups.slice(0, 2).map(setup => `${escapeHtml(setup.name)}\nWinrate: <b>${setup.winRate.toFixed(0)}%</b>`).join('\n\n')
+    : 'not enough data';
+  const bestPhaseLines = learning.bestMarketPhases.length > 0
+    ? learning.bestMarketPhases.slice(0, 2).map(phase => `${escapeHtml(phase.phase)} — <b>${phase.winRate.toFixed(0)}%</b>`).join('\n')
+    : 'not enough data';
+  const worstPhaseLines = learning.worstMarketPhases.length > 0
+    ? learning.worstMarketPhases.slice(0, 2).map(phase => `${escapeHtml(phase.phase)} — <b>${phase.winRate.toFixed(0)}%</b>`).join('\n')
+    : 'not enough data';
+  const errors = learning.commonErrors.length > 0
+    ? learning.commonErrors.slice(0, 3).map((error, idx) => `${idx + 1}. ${escapeHtml(error.name)} (${error.count})`).join('\n')
+    : 'not enough data';
+  const recommendations = learning.recommendations.items.slice(0, 6).map(item => `• ${cleanReason(item)}`).join('\n');
+  const quality = learning.quality;
+
+  return `
+🧠 <b>LEARNING ENGINE</b>
+
+Closed trades: <b>${learning.closedTrades}</b>
+WIN: <b>${learning.wins}</b>
+LOSS: <b>${learning.losses}</b>
+Winrate: <b>${learning.winRate.toFixed(1)}%</b>
+
+🎯 <b>TP Statistics</b>
+TP1 reached: <b>${learning.tpStats.tp1ReachPercent.toFixed(0)}%</b>
+TP2 reached: <b>${learning.tpStats.tp2ReachPercent.toFixed(0)}%</b>
+TP3 reached: <b>${learning.tpStats.tp3ReachPercent.toFixed(0)}%</b>
+
+🏆 <b>Best Setups</b>
+${bestSetupLines}
+
+💀 <b>Worst Setups</b>
+${worstSetupLines}
+
+📈 <b>Best Market Phase</b>
+${bestPhaseLines}
+
+📉 <b>Worst Market Phase</b>
+${worstPhaseLines}
+
+⚠ <b>Most Common Errors</b>
+${errors}
+
+📊 <b>TRADE QUALITY</b>
+Average confidence: <b>${formatOptional(quality.averageConfidence, 1)} / 10</b>
+Winning confidence: <b>${formatOptional(quality.winningConfidence, 1)} / 10</b>
+Losing confidence: <b>${formatOptional(quality.losingConfidence, 1)} / 10</b>
+Average holding time: <b>${formatDuration(quality.averageHoldingMinutes)}</b>
+Average drawdown: <b>${formatOptional(quality.averageDrawdownPercent, 1)}%</b>
+Average max profit before exit: <b>${formatOptional(quality.averageMaxProfitPercent, 1)}%</b>
+${learning.missingFields.length > 0 ? `\nMissing data:\n${learning.missingFields.map(escapeHtml).join(', ')}` : ''}
+
+🧠 <b>Recommendations</b>
+${recommendations}
+
+🤖 <b>Self Learning</b>
+Status: <b>${learning.selfLearning.status}</b>
+Reason: <b>${escapeHtml(learning.selfLearning.reason)}</b>
+Collected trades: <b>${learning.selfLearning.collectedTrades}</b>
+Required: <b>${learning.selfLearning.requiredTrades}</b>
+`.trim();
+}
+
+export function formatLearningDashboard(dashboard: LearningDashboard): string {
+  return `
+🧠 <b>AI Learning Engine</b>
+
+Closed trades: <b>${dashboard.closedTrades}</b>
+Winrate: <b>${dashboard.winRate.toFixed(1)}%</b>
+
+Best setup:
+<b>${escapeHtml(dashboard.bestSetup)}</b>
+
+Worst setup:
+<b>${escapeHtml(dashboard.worstSetup)}</b>
+
+TP reach:
+TP1: <b>${dashboard.tp1ReachPercent.toFixed(0)}%</b>
+TP2: <b>${dashboard.tp2ReachPercent.toFixed(0)}%</b>
+TP3: <b>${dashboard.tp3ReachPercent.toFixed(0)}%</b>
+
+Top error:
+<b>${escapeHtml(dashboard.topError)}</b>
+
+Self-learning:
+❌ <b>OFF</b>
+
+Collected trades:
+<b>${dashboard.selfLearning.collectedTrades} / ${dashboard.selfLearning.requiredTrades}</b>
+`.trim();
+}
+
+function formatOptional(value: number | null, digits: number): string {
+  return value === null ? 'not enough data' : value.toFixed(digits);
+}
+
+function formatDuration(minutes: number | null): string {
+  if (minutes === null) return 'not enough data';
+  const rounded = Math.round(minutes);
+  const hours = Math.floor(rounded / 60);
+  const mins = rounded % 60;
+  return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 }
 
 export function formatLearningInProgressMessage(completedTrades: number, requiredTrades = 10): string {
