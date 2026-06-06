@@ -1,5 +1,5 @@
 import { getTodayTrades, getBotState } from '../database/db';
-import { getAccountBalance } from '../okx/trading';
+import { getDisplayBalance } from '../utils/balance';
 import { formatDailyReport } from '../telegram/messages';
 import { broadcastMessage } from '../telegram/bot';
 import { logger } from '../utils/logger';
@@ -7,11 +7,11 @@ import { logger } from '../utils/logger';
 export async function generateDailyReport(): Promise<string> {
   const today = new Date().toISOString().split('T')[0];
   const trades = getTodayTrades();
-  const balance = await getAccountBalance();
+  const balance = await getDisplayBalance();
 
   // Approximate start balance (simplified)
   const totalPnlUsdt = trades.reduce((a, t) => a + (t.pnlUsdt ?? 0), 0);
-  const startBalance = balance - totalPnlUsdt;
+  const startBalance = balance === null ? null : balance - totalPnlUsdt;
 
   return formatDailyReport(today, trades, balance, startBalance);
 }
