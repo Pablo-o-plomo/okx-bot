@@ -1,6 +1,6 @@
-import { getOpenTrades, closeTrade, getTradeById } from '../database/db';
+import { getOpenTrades, closeTrade, getTradeById, updateTradeExcursion, updateTradeStopLoss, updateTradeTpHit } from '../database/db';
 import { getTicker } from '../okx/market';
-import { closePosition, updatePaperBalance } from '../okx/trading';
+import { closePosition, moveStopLossToBreakeven, updatePaperBalance } from '../okx/trading';
 import { recordTradeResult } from './riskManager';
 import { broadcastTpHit, broadcastTradeClosed } from '../telegram/bot';
 import { logger } from '../utils/logger';
@@ -30,8 +30,12 @@ async function checkTrade(trade: Trade): Promise<void> {
   const id = trade.id;
   if (!tpHitMap.has(id)) tpHitMap.set(id, new Set());
   const hitTPs = tpHitMap.get(id)!;
+  if (trade.tp1Hit) hitTPs.add(1);
+  if (trade.tp2Hit || trade.stopLoss === trade.entryPrice) hitTPs.add(2);
+  if (trade.tp3Hit) hitTPs.add(3);
 
   const isLong = trade.direction === 'LONG';
+  updateTradeLifeMetrics(trade, currentPrice);
 
   // ── Check Stop Loss ──
   const slHit = isLong
@@ -39,7 +43,7 @@ async function checkTrade(trade: Trade): Promise<void> {
     : currentPrice >= trade.stopLoss;
 
   if (slHit) {
-    await handleClose(trade, currentPrice, 'closed_sl');
+    await handleClose(trade, trade.stopLoss, 'closed_sl');
     return;
   }
 
@@ -50,6 +54,9 @@ async function checkTrade(trade: Trade): Promise<void> {
 
   if (tp3Hit && !hitTPs.has(3)) {
     hitTPs.add(3);
+    updateTradeTpHit(id, 1);
+    updateTradeTpHit(id, 2);
+    updateTradeTpHit(id, 3);
     await handleClose(trade, currentPrice, 'closed_tp3');
     tpHitMap.delete(id);
     return;
@@ -57,17 +64,57 @@ async function checkTrade(trade: Trade): Promise<void> {
 
   if (tp2Hit && !hitTPs.has(2)) {
     hitTPs.add(2);
-    // Notify TP2 hit but keep trade open for TP3
-    await broadcastTpHit(trade, 2, currentPrice);
-    // Move SL to entry (breakeven)
-    logger.info(`📈 TP2 hit for ${trade.symbol} — moving SL to breakeven`);
+    updateTradeTpHit(id, 1);
+    updateTradeTpHit(id, 2);
+    trade.tp1Hit = true;
+    trade.tp2Hit = true;
+    await moveStopToBreakeven(trade);
+    await broadcastTpHit(trade, 2, currentPrice, true);
+    logger.info(`📈 TP2 hit for ${trade.symbol} — SL moved to breakeven`);
     return;
   }
 
   if (tp1Hit && !hitTPs.has(1)) {
     hitTPs.add(1);
+    updateTradeTpHit(id, 1);
+    trade.tp1Hit = true;
     await broadcastTpHit(trade, 1, currentPrice);
     logger.info(`📈 TP1 hit for ${trade.symbol}`);
+  }
+}
+
+function updateTradeLifeMetrics(trade: Trade, currentPrice: number): void {
+  if (!trade.id) return;
+
+  const pnlPercent = trade.direction === 'LONG'
+    ? ((currentPrice - trade.entryPrice) / trade.entryPrice) * 100 * trade.leverage
+    : ((trade.entryPrice - currentPrice) / trade.entryPrice) * 100 * trade.leverage;
+
+  const maxProfitPercent = Math.max(pnlPercent, 0);
+  const maxDrawdownPercent = Math.max(-pnlPercent, 0);
+  updateTradeExcursion(
+    trade.id,
+    parseFloat(maxProfitPercent.toFixed(4)),
+    parseFloat(maxDrawdownPercent.toFixed(4)),
+  );
+}
+
+async function moveStopToBreakeven(trade: Trade): Promise<void> {
+  if (!trade.id) return;
+
+  const breakevenStopLoss = trade.entryPrice;
+  updateTradeStopLoss(trade.id, breakevenStopLoss);
+  trade.stopLoss = breakevenStopLoss;
+
+  try {
+    await moveStopLossToBreakeven(
+      trade.symbol,
+      trade.direction,
+      trade.positionSize,
+      breakevenStopLoss,
+    );
+  } catch (err: any) {
+    logger.error(`Failed to move SL to breakeven for ${trade.symbol}: ${err.message}`);
   }
 }
 
@@ -78,9 +125,10 @@ async function handleClose(
 ): Promise<void> {
   if (!trade.id) return;
 
-  const isWin = status !== 'closed_sl';
-  const result = isWin ? 'win' : 'loss';
   const isLong = trade.direction === 'LONG';
+  const isBreakeven = status === 'closed_sl' && exitPrice === trade.entryPrice;
+  const isWin = status !== 'closed_sl';
+  const result = isBreakeven ? 'breakeven' : isWin ? 'win' : 'loss';
 
   const pnlPercent = isLong
     ? ((exitPrice - trade.entryPrice) / trade.entryPrice) * 100 * trade.leverage

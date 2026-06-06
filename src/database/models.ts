@@ -38,6 +38,7 @@ export interface Signal {
 // ─── Trade ────────────────────────────────────────────────────────────────────
 export type TradeStatus = 'open' | 'closed_tp1' | 'closed_tp2' | 'closed_tp3' | 'closed_sl' | 'closed_manual';
 export type TradeResult = 'win' | 'loss' | 'breakeven';
+export type MarketPhase = 'TREND_UP' | 'TREND_DOWN' | 'RANGE' | 'BREAKOUT' | 'HIGH_VOLATILITY' | 'UNKNOWN';
 
 export interface Trade {
   id?: number;
@@ -50,6 +51,22 @@ export interface Trade {
   takeProfit1: number;
   takeProfit2: number;
   takeProfit3: number;
+  tp1Hit?: boolean;
+  tp2Hit?: boolean;
+  tp3Hit?: boolean;
+  tp1HitAt?: string | null;
+  tp2HitAt?: string | null;
+  tp3HitAt?: string | null;
+  maxProfitPercent?: number;
+  maxDrawdownPercent?: number;
+  holdingTimeMinutes?: number | null;
+  marketPhase?: MarketPhase;
+  signalConfidence?: number;
+  scannerScore?: number;
+  volumeRatio?: number;
+  atrAtEntry?: number;
+  rsiAtEntry?: number;
+  trendStrength?: number;
   positionSize: number;
   leverage: number;
   status: TradeStatus;
@@ -115,7 +132,76 @@ export interface AnalysisReport {
   worstSetups: string[];
   frequentErrors: string[];
   recommendations: string[];
+  learning?: LearningEngineStats;
   createdAt?: string;
+}
+
+export interface LearningEngineStats {
+  closedTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  tpStats: {
+    tp1ReachPercent: number;
+    tp2ReachPercent: number;
+    tp3ReachPercent: number;
+  };
+  bestSetups: Array<{ name: string; winRate: number; trades: number }>;
+  worstSetups: Array<{ name: string; winRate: number; trades: number }>;
+  bestMarketPhases: Array<{ phase: string; winRate: number; trades: number }>;
+  worstMarketPhases: Array<{ phase: string; winRate: number; trades: number }>;
+  commonErrors: Array<{ name: string; count: number }>;
+  quality: {
+    averageConfidence: number | null;
+    winningConfidence: number | null;
+    losingConfidence: number | null;
+    averageHoldingMinutes: number | null;
+    averageDrawdownPercent: number | null;
+    averageMaxProfitPercent: number | null;
+  };
+  recommendations: AutoOptimizeRecommendations;
+  selfLearning: {
+    status: 'OFF';
+    reason: string;
+    collectedTrades: number;
+    requiredTrades: number;
+  };
+  missingFields: string[];
+}
+
+export interface LearningDashboard {
+  closedTrades: number;
+  winRate: number;
+  bestSetup: string;
+  worstSetup: string;
+  tp1ReachPercent: number;
+  tp2ReachPercent: number;
+  tp3ReachPercent: number;
+  topError: string;
+  selfLearning: LearningEngineStats['selfLearning'];
+}
+
+export interface StrategyAdjustments {
+  minConfidence?: number;
+  atrMultiplier?: number;
+  tpMultiplier?: number;
+  blockedSetups: string[];
+  preferredMarketPhases: MarketPhase[];
+  disabledSymbols: string[];
+  reducedRiskSymbols: string[];
+}
+
+export interface LearningProfile {
+  collectedTrades: number;
+  requiredTrades: number;
+  selfLearningEnabled: boolean;
+  safeModeReason: string;
+  candidateAdjustments: StrategyAdjustments;
+}
+
+export interface AutoOptimizeRecommendations {
+  items: string[];
+  profile: LearningProfile;
 }
 
 // ─── Bot State ────────────────────────────────────────────────────────────────
@@ -127,5 +213,6 @@ export interface BotState {
   dailyLossPercent: number;
   lastDailyReset: string;
   totalBalance: number;
-  mode: 'demo' | 'live';
+  paperStartBalance?: number;
+  mode: 'paper' | 'live' | 'demo';
 }
