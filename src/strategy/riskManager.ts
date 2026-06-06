@@ -1,6 +1,6 @@
 import { config } from '../config';
 import { getBotState, updateBotState, getOpenTrades, getOpenTradeBySymbol, getTodayClosedTrades } from '../database/db';
-import { getAccountBalance } from '../okx/trading';
+import { getTradingBalance } from '../utils/balance';
 import { logger } from '../utils/logger';
 import type { Signal, Trade } from '../database/models';
 
@@ -176,7 +176,7 @@ export async function checkRisk(signal: Signal): Promise<RiskCheck> {
  * Calculate position size based on account balance and risk %.
  */
 export async function calculatePositionSize(signal: Signal): Promise<number> {
-  const balance = await getAccountBalance();
+  const balance = await getTradingBalance();
   const riskAmount = balance * (config.trading.riskPerTrade / 100);
   const slDistance = Math.abs(signal.entryPrice - signal.stopLoss);
 

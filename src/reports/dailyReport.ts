@@ -1,5 +1,5 @@
 import { getTodayTrades } from '../database/db';
-import { getDisplayBalance, getOkxReferenceBalance } from '../utils/balance';
+import { getBalanceView } from '../utils/balance';
 import { formatDailyReport } from '../telegram/messages';
 import { broadcastMessage } from '../telegram/bot';
 import { logger } from '../utils/logger';
@@ -8,15 +8,17 @@ import { config } from '../config';
 export async function generateDailyReport(): Promise<string> {
   const today = new Date().toISOString().split('T')[0];
   const trades = getTodayTrades();
-  const balance = await getDisplayBalance();
-  const mode = config.trading.isLive ? 'LIVE' : 'PAPER';
-  const okxBalance = config.trading.isLive ? undefined : await getOkxReferenceBalance();
+  const balanceView = await getBalanceView();
+  const balance = balanceView.tradingBalance;
 
   // Approximate start balance (simplified)
   const totalPnlUsdt = trades.reduce((a, t) => a + (t.pnlUsdt ?? 0), 0);
   const startBalance = balance === null ? null : balance - totalPnlUsdt;
 
-  return formatDailyReport(today, trades, balance, startBalance, { mode, okxBalance });
+  return formatDailyReport(today, trades, balance, startBalance, {
+    mode: balanceView.tradeMode,
+    okxBalance: balanceView.okxBalance,
+  });
 }
 
 export async function sendDailyReport(): Promise<void> {

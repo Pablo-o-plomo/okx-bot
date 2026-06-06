@@ -4,7 +4,7 @@ import path from 'path';
 import cron from 'node-cron';
 import express from 'express';
 import { config } from './config';
-import { initDb, getOpenTrades, getLastNTrades, getRecentSignals, getBotState } from './database/db';
+import { initDb, getOpenTrades, getLastNTrades, getRecentSignals, getPaperTradingBalance } from './database/db';
 import { initTelegramBot, broadcastSignal, sendErrorAlert, recordScannerRun, broadcastScannerHeartbeat } from './telegram/bot';
 import { analyzeSymbol } from './strategy/signalEngine';
 import { checkRisk, calculatePositionSize } from './strategy/riskManager';
@@ -34,7 +34,7 @@ async function bootstrap(): Promise<void> {
 
   if (!config.trading.isLive) {
     logger.info(`   Paper start balance: ${config.trading.paperStartBalance.toFixed(2)} USDT`);
-    logger.info(`   Paper trading balance: ${getBotState().totalBalance.toFixed(2)} USDT`);
+    logger.info(`   Paper trading balance: ${getPaperTradingBalance().toFixed(2)} USDT`);
   }
 
   // 2. Telegram bot
@@ -187,6 +187,33 @@ async function processSymbol(symbol: string): Promise<boolean> {
     return false;
   }
 
+}
+
+
+function detectMarketPhase(indicators?: IndicatorSnapshot): MarketPhase {
+  if (!indicators || !indicators.price) return 'UNKNOWN';
+
+  const atrRatio = indicators.atr / indicators.price;
+  const volumeRatio = getVolumeRatio({ ...indicators });
+
+  if (atrRatio > 0.035) return 'HIGH_VOLATILITY';
+  if (volumeRatio >= 1.5 && Math.abs(indicators.macdHistogram) > 0) return 'BREAKOUT';
+  if (indicators.trend === 'bullish') return 'TREND_UP';
+  if (indicators.trend === 'bearish') return 'TREND_DOWN';
+  if (indicators.trend === 'neutral') return 'RANGE';
+
+  return 'UNKNOWN';
+}
+
+function getVolumeRatio(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.volumeAvg) return 0;
+  return parseFloat((indicators.volumeCurrent / indicators.volumeAvg).toFixed(4));
+}
+
+function getTrendStrength(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.price) return 0;
+  const emaSpread = Math.abs(indicators.ema20 - indicators.ema200) / indicators.price;
+  return parseFloat((emaSpread * 100).toFixed(4));
 }
 
 

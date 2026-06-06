@@ -20,7 +20,7 @@ import {
   getRecentSignals,
   getLastNTrades,
 } from '../database/db';
-import { getDisplayBalance, getOkxReferenceBalance } from '../utils/balance';
+import { getBalanceView } from '../utils/balance';
 import { getDailyRiskSnapshot, pauseBot, resetDailyRiskLock, resumeBot } from '../strategy/riskManager';
 import { generateDailyReport } from '../reports/dailyReport';
 import { generateLearningDashboard, generateLearningReport } from '../reports/learningReport';
@@ -217,15 +217,15 @@ function registerCommands(): void {
 async function sendStatus(chatId: string): Promise<void> {
   const state = getBotState();
   const openTrades = getOpenTrades();
-  const balance = await getDisplayBalance();
-  const okxBalance = config.trading.isLive ? undefined : await getOkxReferenceBalance();
+  const balanceView = await getBalanceView();
   await send(chatId, formatStatusMessage({
-    okxApiMode: config.okx.isDemo ? 'DEMO' : 'LIVE',
-    mode: config.trading.isLive ? 'LIVE' : 'PAPER',
+    okxApiMode: balanceView.okxApiMode,
+    mode: balanceView.tradeMode,
+    autoTrade: balanceView.autoTrade,
     isPaused: state.isPaused,
     openPositions: openTrades.length,
-    balance,
-    okxBalance,
+    balance: balanceView.tradingBalance,
+    okxBalance: balanceView.okxBalance,
     consecutiveLosses: state.consecutiveLosses,
     pauseReason: state.pauseReason,
     symbolsCount: config.trading.symbols.length,
@@ -235,15 +235,14 @@ async function sendStatus(chatId: string): Promise<void> {
 }
 
 async function sendBalance(chatId: string): Promise<void> {
-  const balance = await getDisplayBalance();
-  const okxBalance = config.trading.isLive ? undefined : await getOkxReferenceBalance();
-  const okxLine = config.trading.isLive ? '' : `\nOKX balance: <b>${formatBalance(okxBalance ?? null)}</b>`;
+  const balanceView = await getBalanceView();
+  const okxLine = balanceView.tradeMode === 'LIVE' ? '' : `\nOKX balance: <b>${formatBalance(balanceView.okxBalance ?? null)}</b>`;
 
   await send(chatId, `
 💰 <b>BALANCE</b>
 
-${config.trading.isLive ? 'Balance' : 'Paper balance'}: <b>${formatBalance(balance)}</b>${okxLine}
-Mode: <b>${config.trading.isLive ? 'LIVE' : 'PAPER'}</b>
+${balanceView.tradeMode === 'LIVE' ? 'Balance' : 'Paper balance'}: <b>${formatBalance(balanceView.tradingBalance)}</b>${okxLine}
+Mode: <b>${balanceView.tradeMode}</b>
 `.trim(), true);
 }
 

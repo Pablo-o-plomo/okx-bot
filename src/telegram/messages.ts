@@ -3,6 +3,7 @@ import type { Signal, Trade, AnalysisReport, Direction, LearningDashboard } from
 interface StatusMessageInput {
   okxApiMode: 'LIVE' | 'DEMO';
   mode: 'PAPER' | 'LIVE';
+  autoTrade?: boolean;
   isPaused: boolean;
   openPositions: number;
   balance: number | null;
@@ -40,6 +41,19 @@ function directionStyle(direction: Direction): string {
 
 function formatDisplayBalance(balance: number | null): string {
   return balance === null ? 'unavailable' : `${balance.toFixed(2)} USDT`;
+}
+
+function statusModeLines(input: StatusMessageInput): string {
+  const lines = [
+    `OKX API: <b>${input.okxApiMode}</b>`,
+    `Trade mode: <b>${input.mode}</b>`,
+  ];
+
+  if (input.mode === 'LIVE') {
+    lines.push(`Auto trade: <b>${input.autoTrade ? 'ON' : 'OFF'}</b>`);
+  }
+
+  return lines.join('\n');
 }
 
 function statusBalanceLines(input: StatusMessageInput): string {
@@ -136,8 +150,7 @@ export function formatStatusMessage(input: StatusMessageInput): string {
     return `
 🔴 <b>BOT PAUSED</b>
 
-OKX API: <b>${input.okxApiMode}</b>
-Trade mode: <b>${input.mode}</b>
+${statusModeLines(input)}
 Scanner: <b>${scannerState}</b>
 Positions: <b>${input.openPositions}</b>
 ${statusBalanceLines(input)}
@@ -153,8 +166,7 @@ Last scan: <b>${lastScan}</b>
   return `
 🟢 <b>BOT ACTIVE</b>
 
-OKX API: <b>${input.okxApiMode}</b>
-Trade mode: <b>${input.mode}</b>
+${statusModeLines(input)}
 Scanner: <b>${scannerState}</b>
 Positions: <b>${input.openPositions}</b>
 ${statusBalanceLines(input)}

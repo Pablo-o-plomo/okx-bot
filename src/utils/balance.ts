@@ -1,19 +1,53 @@
-import { getBotState } from '../database/db';
-import { getAccountBalance, getOkxAccountBalance } from '../okx/trading';
+import { getBotState, getPaperTradingBalance } from '../database/db';
+import { getOkxAccountBalance } from '../okx/trading';
 import { config } from '../config';
-import { logger } from './logger';
+
+export interface BalanceView {
+  okxApiMode: 'LIVE' | 'DEMO';
+  tradeMode: 'PAPER' | 'LIVE';
+  autoTrade: boolean;
+  tradingBalance: number;
+  paperBalance?: number;
+  okxBalance?: number | null;
+}
+
+export async function getTradingBalance(): Promise<number> {
+  if (!config.trading.isLive) {
+    return getPaperTradingBalance();
+  }
+
+  const okxBalance = await getOkxAccountBalance();
+  if (okxBalance !== null) return okxBalance;
+
+  const state = getBotState();
+  return state.totalBalance > 0 ? state.totalBalance : config.trading.paperStartBalance;
+}
+
+export async function getBalanceView(): Promise<BalanceView> {
+  const tradingBalance = await getTradingBalance();
+
+  if (!config.trading.isLive) {
+    return {
+      okxApiMode: config.okx.isDemo ? 'DEMO' : 'LIVE',
+      tradeMode: 'PAPER',
+      autoTrade: config.trading.autoTrade,
+      tradingBalance,
+      paperBalance: tradingBalance,
+      okxBalance: await getOkxAccountBalance(),
+    };
+  }
+
+  return {
+    okxApiMode: config.okx.isDemo ? 'DEMO' : 'LIVE',
+    tradeMode: 'LIVE',
+    autoTrade: config.trading.autoTrade,
+    tradingBalance,
+    okxBalance: tradingBalance,
+  };
+}
 
 export async function getDisplayBalance(): Promise<number | null> {
-  if (!config.trading.isLive) {
-    return getBotState().totalBalance;
-  }
-
-  try {
-    return await getAccountBalance();
-  } catch (err: any) {
-    logger.warn(`Failed to fetch display balance: ${err.message}`);
-    return null;
-  }
+  return getTradingBalance();
 }
 
 export async function getOkxReferenceBalance(): Promise<number | null> {

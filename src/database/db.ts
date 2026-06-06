@@ -132,14 +132,19 @@ function createTables(): void {
 }
 
 function syncBotStateMode(): void {
-  const state = db.prepare('SELECT mode, paper_start_balance FROM bot_state WHERE id = 1').get() as {
+  const state = db.prepare('SELECT mode, total_balance, paper_start_balance FROM bot_state WHERE id = 1').get() as {
     mode?: string;
+    total_balance?: number | null;
     paper_start_balance?: number | null;
   } | undefined;
 
   if (config.trading.mode === 'paper') {
     const storedPaperStartBalance = state?.paper_start_balance ?? null;
-    if (state?.mode !== 'paper' || storedPaperStartBalance !== config.trading.paperStartBalance) {
+    const storedTradingBalance = state?.total_balance ?? 0;
+    if (state?.mode !== 'paper'
+      || storedPaperStartBalance !== config.trading.paperStartBalance
+      || storedTradingBalance <= 0
+      || storedTradingBalance < config.trading.paperStartBalance) {
       db.prepare(`
         UPDATE bot_state SET total_balance = ?, paper_start_balance = ?, mode = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = 1
@@ -424,6 +429,25 @@ export function getBotState(): BotState {
     paperStartBalance: row.paper_start_balance ?? undefined,
     mode: row.mode,
   };
+}
+
+export function getPaperTradingBalance(): number {
+  const state = getBotState();
+  const shouldReset = config.trading.mode === 'paper'
+    && (!Number.isFinite(state.totalBalance)
+      || state.totalBalance <= 0
+      || state.totalBalance < config.trading.paperStartBalance);
+
+  if (shouldReset) {
+    updateBotState({
+      totalBalance: config.trading.paperStartBalance,
+      paperStartBalance: config.trading.paperStartBalance,
+      mode: 'paper',
+    });
+    return config.trading.paperStartBalance;
+  }
+
+  return state.totalBalance;
 }
 
 export function updateBotState(partial: Partial<BotState>): void {
