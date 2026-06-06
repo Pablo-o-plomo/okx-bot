@@ -4,7 +4,7 @@ interface StatusMessageInput {
   mode: 'PAPER' | 'LIVE';
   isPaused: boolean;
   openPositions: number;
-  balance: number;
+  balance: number | null;
   consecutiveLosses: number;
   pauseReason?: string;
   symbolsCount: number;
@@ -34,6 +34,10 @@ function compactSymbol(symbol: string): string {
 
 function directionStyle(direction: Direction): string {
   return direction === 'LONG' ? '🟢🟢🟢 LONG' : '🔴🔴🔴 SHORT';
+}
+
+function formatDisplayBalance(balance: number | null): string {
+  return balance === null ? 'unavailable' : `${balance.toFixed(2)} USDT`;
 }
 
 function signed(value: number | undefined, digits = 2): string {
@@ -122,7 +126,7 @@ export function formatStatusMessage(input: StatusMessageInput): string {
 Mode: <b>${input.mode}</b>
 Scanner: <b>${scannerState}</b>
 Positions: <b>${input.openPositions}</b>
-Balance: <b>${input.balance.toFixed(2)} USDT</b>
+Balance: <b>${formatDisplayBalance(input.balance)}</b>
 Loss streak: <b>${input.consecutiveLosses}</b>
 
 Reason:
@@ -138,7 +142,7 @@ Last scan: <b>${lastScan}</b>
 Mode: <b>${input.mode}</b>
 Scanner: <b>${scannerState}</b>
 Positions: <b>${input.openPositions}</b>
-Balance: <b>${input.balance.toFixed(2)} USDT</b>
+Balance: <b>${formatDisplayBalance(input.balance)}</b>
 Loss streak: <b>${input.consecutiveLosses}</b>
 
 🪙 Symbols: <b>${input.symbolsCount}</b>
@@ -248,8 +252,8 @@ ${!isWin && aiFix ? `\nAI fix:\n${aiFix}` : ''}
 export function formatDailyReport(
   date: string,
   trades: Trade[],
-  balance: number,
-  startBalance: number,
+  balance: number | null,
+  startBalance: number | null,
 ): string {
   const closed = trades.filter(t => t.status !== 'open');
   const wins = closed.filter(t => t.result === 'win');
@@ -261,8 +265,8 @@ export function formatDailyReport(
 📋 <b>DAILY DESK REPORT</b>
 
 Date: <b>${escapeHtml(date)}</b>
-Balance: <b>${balance.toFixed(2)} USDT</b>
-Δ Balance: <b>${signed(balance - startBalance)} USDT</b>
+Balance: <b>${formatDisplayBalance(balance)}</b>
+Δ Balance: <b>${balance === null || startBalance === null ? 'unavailable' : `${signed(balance - startBalance)} USDT`}</b>
 
 Trades: <b>${closed.length}</b>
 Wins / Losses: <b>${wins.length} / ${losses.length}</b>

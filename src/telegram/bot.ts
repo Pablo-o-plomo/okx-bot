@@ -20,7 +20,7 @@ import {
   getRecentSignals,
   getLastNTrades,
 } from '../database/db';
-import { getAccountBalance } from '../okx/trading';
+import { getDisplayBalance } from '../utils/balance';
 import { getDailyRiskSnapshot, pauseBot, resetDailyRiskLock, resumeBot } from '../strategy/riskManager';
 import { generateDailyReport } from '../reports/dailyReport';
 import { generateLearningDashboard, generateLearningReport } from '../reports/learningReport';
@@ -64,6 +64,10 @@ export function getBot(): TelegramBot {
 function isAdmin(chatId: string): boolean {
   if (ADMIN_IDS.length === 0) return true; // No admin list = any user
   return ADMIN_IDS.includes(chatId);
+}
+
+function formatBalance(balance: number | null): string {
+  return balance === null ? 'unavailable' : `${balance.toFixed(2)} USDT`;
 }
 
 const MAIN_MENU_KEYBOARD: TelegramBot.ReplyKeyboardMarkup = {
@@ -213,7 +217,7 @@ function registerCommands(): void {
 async function sendStatus(chatId: string): Promise<void> {
   const state = getBotState();
   const openTrades = getOpenTrades();
-  const balance = await getAccountBalance();
+  const balance = await getDisplayBalance();
   await send(chatId, formatStatusMessage({
     mode: config.trading.isLive ? 'LIVE' : 'PAPER',
     isPaused: state.isPaused,
@@ -228,11 +232,11 @@ async function sendStatus(chatId: string): Promise<void> {
 }
 
 async function sendBalance(chatId: string): Promise<void> {
-  const balance = await getAccountBalance();
+  const balance = await getDisplayBalance();
   await send(chatId, `
 💰 <b>BALANCE</b>
 
-Available: <b>${balance.toFixed(2)} USDT</b>
+Available: <b>${formatBalance(balance)}</b>
 Mode: <b>${config.trading.isLive ? 'LIVE' : 'PAPER'}</b>
 `.trim(), true);
 }
