@@ -191,6 +191,10 @@ export async function getOkxAccountBalance(): Promise<number | null> {
     logger.warn(`Failed to fetch OKX balance: ${err.message}`);
     return null;
   }
+
+  const state = getBotState();
+
+  return state.totalBalance || Number(process.env.PAPER_START_BALANCE || 1000);
 }
 
 /**
