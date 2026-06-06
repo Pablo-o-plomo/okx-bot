@@ -124,9 +124,38 @@ function createTables(): void {
       mode TEXT NOT NULL DEFAULT 'demo',
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
-
-    INSERT OR IGNORE INTO bot_state (id) VALUES (1);
   `);
+
+  db.prepare('INSERT OR IGNORE INTO bot_state (id, total_balance, mode) VALUES (1, ?, ?)').run(
+    config.trading.paperStartBalance,
+    config.trading.mode,
+  );
+}
+
+function migrateTables(): void {
+  addColumnIfMissing('trades', 'tp1_hit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'tp2_hit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'tp3_hit', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'tp1_hit_at', 'TEXT');
+  addColumnIfMissing('trades', 'tp2_hit_at', 'TEXT');
+  addColumnIfMissing('trades', 'tp3_hit_at', 'TEXT');
+  addColumnIfMissing('trades', 'max_profit_percent', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'max_drawdown_percent', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'holding_time_minutes', 'INTEGER');
+  addColumnIfMissing('trades', 'market_phase', "TEXT NOT NULL DEFAULT 'UNKNOWN'");
+  addColumnIfMissing('trades', 'signal_confidence', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'scanner_score', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'volume_ratio', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'atr_at_entry', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'rsi_at_entry', 'REAL NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'trend_strength', 'REAL NOT NULL DEFAULT 0');
+}
+
+function addColumnIfMissing(table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some(col => col.name === column)) {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  }
 }
 
 function migrateTables(): void {

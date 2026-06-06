@@ -298,8 +298,9 @@ async function sendMode(chatId: string): Promise<void> {
   await send(chatId, `
 ⚙️ <b>MODE</b>
 
-Mode: <b>${config.trading.isLive ? 'LIVE' : 'PAPER'}</b>
-Execution: <b>${config.trading.isLive ? 'Real orders' : 'Paper only'}</b>
+OKX API mode: <b>${config.okx.isDemo ? 'DEMO' : 'LIVE'}</b>
+Trade execution: <b>${config.trading.isLive ? 'LIVE' : 'PAPER'}</b>
+Auto trade: <b>${config.trading.autoTrade ? 'ON' : 'OFF'}</b>
 `.trim(), true);
 }
 

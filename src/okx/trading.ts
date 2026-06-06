@@ -23,6 +23,20 @@ export async function placeOrder(signal: Signal): Promise<OrderResult> {
   if (!config.trading.isLive) {
     return paperOrder(signal);
   }
+
+  if (!config.trading.autoTrade) {
+    logger.warn('LIVE trade execution requested but AUTO_TRADE=false; order not sent');
+    return {
+      orderId: `SKIPPED-${paperOrderCounter++}`,
+      symbol: signal.symbol,
+      side: signal.direction === 'LONG' ? 'buy' : 'sell',
+      price: signal.entryPrice,
+      size: signal.positionSize,
+      status: 'skipped',
+      paper: true,
+    };
+  }
+
   return liveOrder(signal);
 }
 
@@ -45,7 +59,7 @@ function paperOrder(signal: Signal): OrderResult {
 
 /**
  * Live order via OKX API.
- * ⚠️ Only executes when LIVE_TRADING=true
+ * ⚠️ Only executes when TRADING_MODE=live and AUTO_TRADE=true
  */
 async function liveOrder(signal: Signal): Promise<OrderResult> {
   logger.warn(`🔴 LIVE ORDER: ${signal.direction} ${signal.symbol} @ ${signal.entryPrice}`);
@@ -97,7 +111,7 @@ export async function moveStopLossToBreakeven(
   size: number,
   stopLoss: number,
 ): Promise<OrderResult> {
-  if (!config.trading.isLive) {
+  if (!config.trading.isLive || !config.trading.autoTrade) {
     const orderId = `PAPER-SL-BE-${paperOrderCounter++}`;
     logger.info(`📄 Paper SL moved to breakeven: ${symbol} @ ${stopLoss}`);
     return { orderId, symbol, side: direction === 'LONG' ? 'sell' : 'buy', price: stopLoss, size, status: 'updated', paper: true };
@@ -135,7 +149,7 @@ export async function closePosition(
   size: number,
   price: number,
 ): Promise<OrderResult> {
-  if (!config.trading.isLive) {
+  if (!config.trading.isLive || !config.trading.autoTrade) {
     const orderId = `PAPER-CLOSE-${paperOrderCounter++}`;
     logger.info(`📄 Paper close: ${symbol} @ ${price}`);
     return { orderId, symbol, side: direction === 'LONG' ? 'sell' : 'buy', price, size, status: 'filled', paper: true };
@@ -165,8 +179,8 @@ export async function closePosition(
  * Get account balance from OKX.
  */
 export async function getAccountBalance(): Promise<number> {
-  if (!config.trading.isLive && !config.okx.apiKey) {
-    // Return stored paper balance
+  if (!config.trading.isLive) {
+    // Internal paper trading always uses the virtual SQLite balance.
     const state = getBotState();
     return state.totalBalance;
   }
@@ -176,7 +190,7 @@ export async function getAccountBalance(): Promise<number> {
     const usdtBal = data[0]?.details?.find((d: any) => d.ccy === 'USDT');
     return parseFloat(usdtBal?.availBal || '0');
   } catch (err: any) {
-    logger.error(`Failed to fetch balance: ${err.message}`);
+    logger.warn(`Failed to fetch balance: ${err.message}`);
     const state = getBotState();
     return state.totalBalance;
   }

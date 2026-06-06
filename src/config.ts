@@ -11,6 +11,23 @@ function optionalEnv(key: string, fallback: string): string {
   return process.env[key] || fallback;
 }
 
+function optionalBool(keys: string[], fallback: boolean): boolean {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value !== undefined && value !== '') {
+      return value.toLowerCase() === 'true';
+    }
+  }
+  return fallback;
+}
+
+const legacyLiveTrading = optionalBool(['LIVE_TRADING'], false);
+const tradingMode = optionalEnv('TRADING_MODE', legacyLiveTrading ? 'live' : 'paper').toLowerCase();
+
+if (!['paper', 'live'].includes(tradingMode)) {
+  throw new Error('❌ TRADING_MODE must be either paper or live');
+}
+
 export const config = {
   telegram: {
     botToken: requireEnv('TELEGRAM_BOT_TOKEN'),
@@ -23,11 +40,14 @@ export const config = {
     apiSecret: optionalEnv('OKX_API_SECRET', ''),
     passphrase: optionalEnv('OKX_API_PASSPHRASE', ''),
     baseUrl: 'https://www.okx.com',
-    isDemo: optionalEnv('DEMO_TRADING', 'true') === 'true',
+    isDemo: optionalBool(['OKX_DEMO'], false) || optionalBool(['OKX_SIMULATED'], false),
   },
 
   trading: {
-    isLive: optionalEnv('LIVE_TRADING', 'false') === 'true',
+    mode: tradingMode as 'paper' | 'live',
+    isLive: tradingMode === 'live',
+    autoTrade: optionalBool(['AUTO_TRADE'], false),
+    paperStartBalance: parseFloat(optionalEnv('PAPER_START_BALANCE', '1000')),
     symbols: optionalEnv(
       'SYMBOLS',
       'BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP'

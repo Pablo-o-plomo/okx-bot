@@ -11,7 +11,7 @@ export async function getDisplayBalance(): Promise<number | null> {
   try {
     return await getAccountBalance();
   } catch (err: any) {
-    logger.error(`Failed to fetch display balance: ${err.message}`);
+    logger.warn(`Failed to fetch display balance: ${err.message}`);
     return null;
   }
 }

@@ -23,7 +23,9 @@ async function bootstrap(): Promise<void> {
   fs.mkdirSync(path.join(process.cwd(), 'logs'), { recursive: true });
 
   logger.info('🚀 Starting OKX Trading Bot...');
-  logger.info(`   Mode: ${config.trading.isLive ? '🔴 LIVE' : '📄 PAPER'}`);
+  logger.info(`   OKX API mode: ${config.okx.isDemo ? 'DEMO' : 'LIVE'}`);
+  logger.info(`   Trade execution: ${config.trading.isLive ? 'LIVE' : 'PAPER'}`);
+  logger.info(`   Auto trade: ${config.trading.autoTrade ? 'ON' : 'OFF'}`);
   logger.info(`   Symbols: ${config.trading.symbols.join(', ')}`);
   logger.info(`   Timeframes: ${config.trading.timeframes.join(', ')}`);
 
@@ -35,7 +37,12 @@ async function bootstrap(): Promise<void> {
 
   // 3. Express health check
   const app = express();
-  app.get('/health', (_, res) => res.json({ status: 'ok', mode: config.trading.isLive ? 'live' : 'paper' }));
+  app.get('/health', (_, res) => res.json({
+    status: 'ok',
+    okxApiMode: config.okx.isDemo ? 'demo' : 'live',
+    tradeExecution: config.trading.mode,
+    autoTrade: config.trading.autoTrade,
+  }));
   app.listen(config.server.port, () => logger.info(`🌐 Health check: http://localhost:${config.server.port}/health`));
 
   // 4. Start schedulers
@@ -133,6 +140,11 @@ async function processSymbol(symbol: string): Promise<boolean> {
   // Broadcast to Telegram
   await broadcastSignal(signal);
 
+  if (config.trading.isLive && !config.trading.autoTrade) {
+    logger.info(`AUTO_TRADE=false; signal published without placing order for ${symbol}`);
+    return false;
+  }
+
   // Place paper/live order
   try {
     const order = await placeOrder(signal);
@@ -170,6 +182,33 @@ async function processSymbol(symbol: string): Promise<boolean> {
     return false;
   }
 
+}
+
+
+function detectMarketPhase(indicators?: IndicatorSnapshot): MarketPhase {
+  if (!indicators || !indicators.price) return 'UNKNOWN';
+
+  const atrRatio = indicators.atr / indicators.price;
+  const volumeRatio = getVolumeRatio({ ...indicators });
+
+  if (atrRatio > 0.035) return 'HIGH_VOLATILITY';
+  if (volumeRatio >= 1.5 && Math.abs(indicators.macdHistogram) > 0) return 'BREAKOUT';
+  if (indicators.trend === 'bullish') return 'TREND_UP';
+  if (indicators.trend === 'bearish') return 'TREND_DOWN';
+  if (indicators.trend === 'neutral') return 'RANGE';
+
+  return 'UNKNOWN';
+}
+
+function getVolumeRatio(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.volumeAvg) return 0;
+  return parseFloat((indicators.volumeCurrent / indicators.volumeAvg).toFixed(4));
+}
+
+function getTrendStrength(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.price) return 0;
+  const emaSpread = Math.abs(indicators.ema20 - indicators.ema200) / indicators.price;
+  return parseFloat((emaSpread * 100).toFixed(4));
 }
 
 
