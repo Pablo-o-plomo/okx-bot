@@ -4,27 +4,48 @@ import { logger } from '../utils/logger';
 import {
   formatSignalMessage,
   formatTradeClosedMessage,
-  sendTradeUpdate as buildTpMessage,
-  formatDailyReport,
+  formatTpUpdateMessage,
   formatStatusMessage,
   formatErrorAlert,
   formatLearningReport,
+  formatPositionsMessage,
+  formatSignalsListMessage,
+  formatLearningInProgressMessage,
+  formatLearningDashboard,
+  formatHeartbeatMessage,
 } from './messages';
 import {
   getBotState,
   getOpenTrades,
   getRecentSignals,
   getLastNTrades,
-  getTodayTrades,
 } from '../database/db';
-import { getAccountBalance } from '../okx/trading';
-import { pauseBot, resumeBot } from '../strategy/riskManager';
+import { getBalanceView } from '../utils/balance';
+import { getDailyRiskSnapshot, getRiskGuardSettings, pauseBot, resetDailyRiskLock, resumeBot, toggleAutoPauseOnLimit } from '../strategy/riskManager';
 import { generateDailyReport } from '../reports/dailyReport';
-import { generateLearningReport } from '../reports/learningReport';
+import { generateLearningDashboard, generateLearningReport } from '../reports/learningReport';
 import type { Signal, Trade } from '../database/models';
 
 let bot: TelegramBot;
 const ADMIN_IDS = config.telegram.adminId ? [config.telegram.adminId] : [];
+
+const scannerTelemetry = {
+  checkedSymbols: config.trading.symbols.length,
+  signalsFound: 0,
+  openPositions: 0,
+  lastScan: undefined as string | undefined,
+};
+
+function formatClock(date = new Date()): string {
+  return date.toISOString().slice(11, 16);
+}
+
+export function recordScannerRun(checkedSymbols: number, signalsFound: number, openPositions: number): void {
+  scannerTelemetry.checkedSymbols = checkedSymbols;
+  scannerTelemetry.signalsFound = signalsFound;
+  scannerTelemetry.openPositions = openPositions;
+  scannerTelemetry.lastScan = formatClock();
+}
 
 export function initTelegramBot(): TelegramBot {
   bot = new TelegramBot(config.telegram.botToken, { polling: true });
@@ -45,162 +66,162 @@ function isAdmin(chatId: string): boolean {
   return ADMIN_IDS.includes(chatId);
 }
 
+function formatBalance(balance: number | null): string {
+  return balance === null ? 'unavailable' : `${balance.toFixed(2)} USDT`;
+}
+
+const MAIN_MENU_KEYBOARD: TelegramBot.ReplyKeyboardMarkup = {
+  keyboard: [
+    [{ text: '📊 Статус' }, { text: '⏸ Пауза' }],
+    [{ text: '▶️ Возобновить' }, { text: '📦 Позиции' }],
+    [{ text: '📈 Сигналы' }, { text: '📋 Отчет' }],
+    [{ text: '⚙️ Риск' }, { text: '🛡️ Риск-менеджмент' }],
+    [{ text: '⏸ Автопауза' }, { text: '⚙️ Настройки риска' }],
+    [{ text: '🧠 Анализ' }, { text: '🧠 Learning' }],
+  ],
+  resize_keyboard: true,
+  is_persistent: true,
+};
+
 function registerCommands(): void {
   // /start
   bot.onText(/\/start/, async (msg) => {
-    const state = getBotState();
-    const openTrades = getOpenTrades();
-    const balance = await getAccountBalance();
-    await send(msg.chat.id.toString(), formatStatusMessage(
-      state.mode, state.isPaused, openTrades.length, balance, state.consecutiveLosses,
-    ));
+    await sendStatus(msg.chat.id.toString());
   });
 
   // /balance
   bot.onText(/\/balance/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
-    const balance = await getAccountBalance();
-    const state = getBotState();
-    await send(msg.chat.id.toString(), `💰 <b>Баланс:</b> ${balance.toFixed(2)} USDT\nРежим: ${state.mode.toUpperCase()}`);
+    await sendBalance(msg.chat.id.toString());
   });
 
   // /signals
   bot.onText(/\/signals/, async (msg) => {
-    const signals = getRecentSignals(5);
-    if (signals.length === 0) {
-      await send(msg.chat.id.toString(), '📭 Нет сигналов в базе.');
-      return;
-    }
-    const text = signals.map(s =>
-      `• ${s.symbol} ${s.direction} @ ${s.entryPrice} | Уверенность: ${s.confidence}/10 | ${s.status} | ${s.createdAt?.split('T')[0]}`
-    ).join('\n');
-    await send(msg.chat.id.toString(), `📋 <b>Последние сигналы:</b>\n${text}`);
+    await sendSignals(msg.chat.id.toString());
   });
 
   // /positions
   bot.onText(/\/positions/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
-    const trades = getOpenTrades();
-    if (trades.length === 0) {
-      await send(msg.chat.id.toString(), '📭 Нет открытых позиций.');
-      return;
-    }
-    const text = trades.map(t =>
-      `• ${t.symbol} ${t.direction} @ ${t.entryPrice} | SL: ${t.stopLoss} | TP1: ${t.takeProfit1}`
-    ).join('\n');
-    await send(msg.chat.id.toString(), `📊 <b>Открытые позиции (${trades.length}):</b>\n${text}`);
+    await sendPositions(msg.chat.id.toString());
   });
 
   // /stats
   bot.onText(/\/stats/, async (msg) => {
-    const trades = getLastNTrades(50);
-    const closed = trades.filter(t => t.status !== 'open');
-    if (closed.length === 0) {
-      await send(msg.chat.id.toString(), '📭 Нет закрытых сделок.');
-      return;
-    }
-    const wins = closed.filter(t => t.result === 'win');
-    const winRate = (wins.length / closed.length) * 100;
-    const totalPnl = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0);
-    const avgWin = wins.length > 0 ? wins.reduce((a, t) => a + (t.pnlPercent ?? 0), 0) / wins.length : 0;
-    const losses = closed.filter(t => t.result === 'loss');
-    const avgLoss = losses.length > 0 ? losses.reduce((a, t) => a + (t.pnlPercent ?? 0), 0) / losses.length : 0;
-
-    await send(msg.chat.id.toString(), `
-📊 <b>Статистика (последние ${closed.length} сделок):</b>
-
-✅ Побед: ${wins.length} | ❌ Поражений: ${losses.length}
-Winrate: <b>${winRate.toFixed(1)}%</b>
-Общий PnL: <b>${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}%</b>
-Средняя прибыль: +${avgWin.toFixed(2)}%
-Средний убыток: ${avgLoss.toFixed(2)}%
-    `.trim());
+    await sendStats(msg.chat.id.toString());
   });
 
   // /pause
   bot.onText(/\/pause/, (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
-    pauseBot('Ручная остановка через Telegram');
-    send(msg.chat.id.toString(), '⛔ Торговля остановлена вручную.');
+    sendPause(msg.chat.id.toString());
   });
 
   // /resume
   bot.onText(/\/resume/, (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
-    resumeBot();
-    send(msg.chat.id.toString(), '▶️ Торговля возобновлена.');
+    sendResume(msg.chat.id.toString());
   });
 
   // /mode
   bot.onText(/\/mode/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
-    const state = getBotState();
-    await send(msg.chat.id.toString(), `
-⚙️ <b>Текущий режим:</b> ${state.mode.toUpperCase()}
-LIVE_TRADING: ${config.trading.isLive ? '🟢 включен' : '🔴 выключен'}
-DEMO_TRADING: ${config.okx.isDemo ? '🟢 включен' : '🔴 выключен'}
-    `.trim());
+    await sendMode(msg.chat.id.toString());
   });
 
   // /risk
   bot.onText(/\/risk/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
-    const state = getBotState();
-    await send(msg.chat.id.toString(), `
-⚙️ <b>Настройки риска:</b>
+    await sendRisk(msg.chat.id.toString());
+  });
 
-Риск на сделку: ${config.trading.riskPerTrade}%
-Макс. дневной убыток: ${config.trading.maxDailyLoss}%
-Макс. открытых позиций: ${config.trading.maxOpenPositions}
-Макс. убытков подряд: ${config.trading.maxLossesInRow}
-Текущий дневной убыток: ${state.dailyLossPercent.toFixed(2)}%
-Убытков подряд сейчас: ${state.consecutiveLosses}
-    `.trim());
+  // /reset-risk
+  bot.onText(/\/reset-risk/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendResetRisk(msg.chat.id.toString());
   });
 
   // /report
   bot.onText(/\/report/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
-    try {
-      const report = await generateDailyReport();
-      await send(msg.chat.id.toString(), report);
-    } catch (err: any) {
-      await send(msg.chat.id.toString(), `Ошибка генерации отчета: ${err.message}`);
-    }
+    await sendReport(msg.chat.id.toString());
   });
 
   // /errors
   bot.onText(/\/errors/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
-    const trades = getLastNTrades(20).filter(t => t.result === 'loss');
-    if (trades.length === 0) {
-      await send(msg.chat.id.toString(), '✅ Убыточных сделок нет.');
-      return;
-    }
-    const tagCounts: Record<string, number> = {};
-    for (const t of trades) {
-      for (const tag of t.errorTags ?? []) {
-        tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
-      }
-    }
-    const sorted = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]);
-    const text = sorted.map(([tag, count]) => `• #${tag}: ${count}x`).join('\n');
-    await send(msg.chat.id.toString(), `⚠️ <b>Частые ошибки (последние 20 сделок):</b>\n${text}`);
+    await sendErrors(msg.chat.id.toString());
   });
 
   // /analyze (trigger learning report manually)
   bot.onText(/\/analyze/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
-    try {
-      const report = generateLearningReport(20);
-      if (report) {
-        await send(msg.chat.id.toString(), formatLearningReport(report));
-      } else {
-        await send(msg.chat.id.toString(), '📭 Недостаточно данных для анализа (нужно минимум 10 сделок).');
-      }
-    } catch (err: any) {
-      await send(msg.chat.id.toString(), `Ошибка: ${err.message}`);
-    }
+    await sendAnalyze(msg.chat.id.toString());
+  });
+
+  // /learning
+  bot.onText(/\/learning/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendLearning(msg.chat.id.toString());
+  });
+
+  // Reply keyboard buttons
+  bot.onText(/^📊 Статус$/, async (msg) => {
+    await sendStatus(msg.chat.id.toString());
+  });
+
+  bot.onText(/^⏸ Пауза$/, (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    sendPause(msg.chat.id.toString());
+  });
+
+  bot.onText(/^▶️ Возобновить$/, (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    sendResume(msg.chat.id.toString());
+  });
+
+  bot.onText(/^📦 Позиции$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendPositions(msg.chat.id.toString());
+  });
+
+  bot.onText(/^📈 Сигналы$/, async (msg) => {
+    await sendSignals(msg.chat.id.toString());
+  });
+
+  bot.onText(/^📋 Отчет$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendReport(msg.chat.id.toString());
+  });
+
+  bot.onText(/^⚙️ Риск$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendRisk(msg.chat.id.toString());
+  });
+
+  bot.onText(/^🛡️ Риск-менеджмент$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendRiskManagement(msg.chat.id.toString());
+  });
+
+  bot.onText(/^⏸ Автопауза$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendAutoPauseToggle(msg.chat.id.toString());
+  });
+
+  bot.onText(/^⚙️ Настройки риска$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendRiskSettings(msg.chat.id.toString());
+  });
+
+  bot.onText(/^🧠 Анализ$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendAnalyze(msg.chat.id.toString());
+  });
+
+  bot.onText(/^🧠 Learning$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendLearning(msg.chat.id.toString());
   });
 
   // Handle polling errors gracefully
@@ -209,11 +230,259 @@ DEMO_TRADING: ${config.okx.isDemo ? '🟢 включен' : '🔴 выключе
   });
 }
 
+async function sendStatus(chatId: string): Promise<void> {
+  const state = getBotState();
+  const openTrades = getOpenTrades();
+  const balanceView = await getBalanceView();
+  await send(chatId, formatStatusMessage({
+    okxApiMode: balanceView.okxApiMode,
+    mode: balanceView.tradeMode,
+    autoTrade: balanceView.autoTrade,
+    isPaused: state.isPaused,
+    openPositions: openTrades.length,
+    balance: balanceView.tradingBalance,
+    okxBalance: balanceView.okxBalance,
+    consecutiveLosses: state.consecutiveLosses,
+    pauseReason: state.pauseReason,
+    symbolsCount: config.trading.symbols.length,
+    timeframes: config.trading.timeframes,
+    lastScan: scannerTelemetry.lastScan,
+  }), true);
+}
+
+async function sendBalance(chatId: string): Promise<void> {
+  const balanceView = await getBalanceView();
+  const okxLine = balanceView.tradeMode === 'LIVE' ? '' : `\nOKX balance: <b>${formatBalance(balanceView.okxBalance ?? null)}</b>`;
+
+  await send(chatId, `
+💰 <b>BALANCE</b>
+
+${balanceView.tradeMode === 'LIVE' ? 'Balance' : 'Paper balance'}: <b>${formatBalance(balanceView.tradingBalance)}</b>${okxLine}
+Mode: <b>${balanceView.tradeMode}</b>
+`.trim(), true);
+}
+
+async function sendSignals(chatId: string): Promise<void> {
+  const signals = getRecentSignals(5);
+  if (signals.length === 0) {
+    await send(chatId, '📈 <b>No recent signals</b>', true);
+    return;
+  }
+  await send(chatId, formatSignalsListMessage(signals), true);
+}
+
+async function sendPositions(chatId: string): Promise<void> {
+  const trades = getOpenTrades();
+  if (trades.length === 0) {
+    await send(chatId, '📦 <b>No open positions</b>', true);
+    return;
+  }
+  await send(chatId, formatPositionsMessage(trades), true);
+}
+
+async function sendStats(chatId: string): Promise<void> {
+  const trades = getLastNTrades(50);
+  const closed = trades.filter(t => t.status !== 'open');
+  if (closed.length === 0) {
+    await send(chatId, '📊 <b>No closed trades</b>', true);
+    return;
+  }
+  const wins = closed.filter(t => t.result === 'win');
+  const winRate = (wins.length / closed.length) * 100;
+  const totalPnl = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0);
+  const avgWin = wins.length > 0 ? wins.reduce((a, t) => a + (t.pnlPercent ?? 0), 0) / wins.length : 0;
+  const losses = closed.filter(t => t.result === 'loss');
+  const avgLoss = losses.length > 0 ? losses.reduce((a, t) => a + (t.pnlPercent ?? 0), 0) / losses.length : 0;
+
+  await send(chatId, `
+📊 <b>PERFORMANCE</b>
+
+Trades: <b>${closed.length}</b>
+Wins / Losses: <b>${wins.length} / ${losses.length}</b>
+Winrate: <b>${winRate.toFixed(1)}%</b>
+PNL: <b>${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}%</b>
+Avg win/loss: <b>+${avgWin.toFixed(2)}% / ${avgLoss.toFixed(2)}%</b>
+`.trim(), true);
+}
+
+function sendPause(chatId: string): void {
+  pauseBot('Ручная остановка через Telegram');
+  send(chatId, '⏸ Торговля поставлена на паузу. Новые сделки открываться не будут.', true);
+}
+
+function sendResume(chatId: string): void {
+  resumeBot();
+  send(chatId, '▶️ Торговля возобновлена. Сканер снова проверяет рынок каждые 5 минут.', true);
+}
+
+async function sendMode(chatId: string): Promise<void> {
+  await send(chatId, `
+⚙️ <b>MODE</b>
+
+OKX API mode: <b>${config.okx.isDemo ? 'DEMO' : 'LIVE'}</b>
+Trade execution: <b>${config.trading.isLive ? 'LIVE' : 'PAPER'}</b>
+Auto trade: <b>${config.trading.autoTrade ? 'ON' : 'OFF'}</b>
+`.trim(), true);
+}
+
+function riskOnOff(value: boolean): string {
+  return value ? 'ВКЛ' : 'ВЫКЛ';
+}
+
+function riskManagementText(): string {
+  const state = getBotState();
+  const dailyRisk = getDailyRiskSnapshot();
+  const settings = getRiskGuardSettings();
+
+  return `
+🛡️ <b>Риск-менеджмент: ${riskOnOff(settings.riskGuardEnabled)}</b>
+Автопауза при лимитах: <b>${riskOnOff(settings.autoPauseOnLimit)}</b>
+Риск на сделку: <b>${settings.riskPerTrade}%</b>
+Макс. дневной убыток: <b>${settings.maxDailyLoss}%</b>
+Макс. убытков подряд: <b>${settings.maxLossStreak}</b>
+Текущий дневной убыток: <b>${dailyRisk.dailyLossPercent.toFixed(2)}%</b>
+Убытков подряд сейчас: <b>${state.consecutiveLosses}</b>
+`.trim();
+}
+
+async function sendRisk(chatId: string): Promise<void> {
+  const state = getBotState();
+  const dailyRisk = getDailyRiskSnapshot();
+  const settings = getRiskGuardSettings();
+  const riskLockOn = settings.autoPauseOnLimit && dailyRisk.isLimitReached && state.isPaused;
+  const tradeLines = dailyRisk.trades.length > 0
+    ? dailyRisk.trades.slice(0, 4).map(trade =>
+        `• #${trade.id} ${trade.symbol} ${trade.direction} ${trade.pnlPercent && trade.pnlPercent >= 0 ? '+' : ''}${(trade.pnlPercent ?? 0).toFixed(2)}%`
+      ).join('\n')
+    : '—';
+
+  await send(chatId, `
+📊 <b>Risk Status</b>
+
+Mode: <b>${dailyRisk.mode}</b>
+Risk Guard: <b>${settings.riskGuardEnabled ? 'ON' : 'OFF'}</b>
+Auto Pause: <b>${settings.autoPauseOnLimit ? 'ON' : 'OFF'}</b>
+Daily Net PnL: <b>${dailyRisk.dailyPnlPercent >= 0 ? '+' : ''}${dailyRisk.dailyPnlPercent.toFixed(2)}%</b>
+Closed Trades Today: <b>${dailyRisk.closedTradesCount}</b>
+Risk Lock: <b>${riskLockOn ? 'ON' : 'OFF'}</b>
+Paused Until: <b>${state.pausedUntil ?? '—'}</b>
+Daily Limit: <b>${settings.maxDailyLoss}%</b>
+Loss streak: <b>${state.consecutiveLosses} / ${settings.maxLossStreak}</b>
+Daily limit behavior: <b>${dailyRisk.behavior}</b>
+Reason: <b>${riskLockOn ? (state.pauseReason ?? '—') : '—'}</b>
+
+Trades:
+${tradeLines}
+`.trim(), true);
+}
+
+async function sendRiskManagement(chatId: string): Promise<void> {
+  await send(chatId, riskManagementText(), true);
+}
+
+async function sendRiskSettings(chatId: string): Promise<void> {
+  const settings = getRiskGuardSettings();
+  await send(chatId, `
+⚙️ <b>Настройки риска</b>
+
+Risk Guard: <b>${settings.riskGuardEnabled ? 'ON' : 'OFF'}</b>
+Auto Pause: <b>${settings.autoPauseOnLimit ? 'ON' : 'OFF'}</b>
+Risk per trade: <b>${settings.riskPerTrade}%</b>
+Max daily loss: <b>${settings.maxDailyLoss}%</b>
+Max loss streak: <b>${settings.maxLossStreak}</b>
+`.trim(), true);
+}
+
+async function sendAutoPauseToggle(chatId: string): Promise<void> {
+  const enabled = toggleAutoPauseOnLimit();
+  await send(chatId, `
+⏸ <b>Автопауза при лимитах: ${riskOnOff(enabled)}</b>
+
+Риск-менеджмент: <b>${riskOnOff(getRiskGuardSettings().riskGuardEnabled)}</b>
+`.trim(), true);
+}
+
+async function sendResetRisk(chatId: string): Promise<void> {
+  if (config.trading.isLive) {
+    await send(chatId, '🧯 <b>Reset unavailable</b>\n\nPaper mode only.', true);
+    return;
+  }
+
+  const snapshot = resetDailyRiskLock();
+  await send(chatId, `
+🧯 <b>RISK RESET</b>
+
+Mode: <b>PAPER</b>
+Daily lock: <b>cleared</b>
+Closed today: <b>${snapshot.closedTradesCount}</b>
+Realized PnL: <b>${snapshot.dailyPnlPercent >= 0 ? '+' : ''}${snapshot.dailyPnlPercent.toFixed(2)}%</b>
+`.trim(), true);
+}
+
+async function sendReport(chatId: string): Promise<void> {
+  try {
+    const report = await generateDailyReport();
+    await send(chatId, report, true);
+  } catch (err: any) {
+    logger.error(`Report error: ${err.message}`);
+    await send(chatId, '📋 <b>Report unavailable</b>\n\nTry again later.', true);
+  }
+}
+
+async function sendErrors(chatId: string): Promise<void> {
+  const trades = getLastNTrades(20).filter(t => t.result === 'loss');
+  if (trades.length === 0) {
+    await send(chatId, '✅ <b>No loss patterns</b>', true);
+    return;
+  }
+  const tagCounts: Record<string, number> = {};
+  for (const t of trades) {
+    for (const tag of t.errorTags ?? []) {
+      tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
+    }
+  }
+  const sorted = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const text = sorted.map(([tag, count]) => `• ${tag.replace(/_/g, ' ')}: ${count}x`).join('\n');
+  await send(chatId, `⚠️ <b>LOSS PATTERNS</b>\n\n${text}`, true);
+}
+
+async function sendAnalyze(chatId: string): Promise<void> {
+  try {
+    const report = generateLearningReport(20);
+    if (report) {
+      await send(chatId, formatLearningReport(report), true);
+    } else {
+      const completedTrades = getLastNTrades(10).filter(t => t.status !== 'open').length;
+      await send(chatId, formatLearningInProgressMessage(completedTrades), true);
+    }
+  } catch (err: any) {
+    logger.error(`AI analysis error: ${err.message}`);
+    await send(chatId, '🧠 <b>AI unavailable</b>\n\nTry again later.', true);
+  }
+}
+
+async function sendLearning(chatId: string): Promise<void> {
+  try {
+    const dashboard = generateLearningDashboard(100);
+    await send(chatId, formatLearningDashboard(dashboard), true);
+  } catch (err: any) {
+    logger.error(`Learning dashboard error: ${err.message}`);
+    await send(chatId, '🧠 <b>Learning unavailable</b>\n\nTry again later.', true);
+  }
+}
+
 // ─── Outbound helpers ─────────────────────────────────────────────────────────
 
-async function send(chatId: string, text: string): Promise<void> {
+async function send(chatId: string, text: string, withMenu = false): Promise<void> {
   try {
-    await bot.sendMessage(chatId, text, { parse_mode: 'HTML', disable_web_page_preview: true });
+    const options: TelegramBot.SendMessageOptions = {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    };
+    if (withMenu) {
+      options.reply_markup = MAIN_MENU_KEYBOARD;
+    }
+    await bot.sendMessage(chatId, text, options);
   } catch (err: any) {
     logger.error(`Failed to send Telegram message: ${err.message}`);
   }
@@ -227,14 +496,21 @@ export async function broadcastTradeClosed(trade: Trade, improvements?: string[]
   await send(config.telegram.chatId, formatTradeClosedMessage(trade, improvements));
 }
 
-export async function broadcastTpHit(trade: Trade, level: number, price: number): Promise<void> {
-  const text = await buildTpMessage(trade, level, price);
+export async function broadcastTpHit(trade: Trade, level: number, price: number, stopMovedToBreakeven = false): Promise<void> {
+  const text = formatTpUpdateMessage(trade, level, price, stopMovedToBreakeven);
   await send(config.telegram.chatId, text);
 }
 
 export async function sendErrorAlert(error: string, context?: string): Promise<void> {
-  const target = config.telegram.adminId || config.telegram.chatId;
-  await send(target, formatErrorAlert(error, context));
+  if (!config.telegram.adminId) {
+    logger.error(`Telegram admin alert skipped: ${context ? `${context}: ` : ''}${error}`);
+    return;
+  }
+  await send(config.telegram.adminId, formatErrorAlert(error, context));
+}
+
+export async function broadcastScannerHeartbeat(): Promise<void> {
+  await send(config.telegram.chatId, formatHeartbeatMessage(scannerTelemetry));
 }
 
 export async function broadcastMessage(text: string): Promise<void> {
