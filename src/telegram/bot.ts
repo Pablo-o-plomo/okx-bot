@@ -21,7 +21,7 @@ import {
   getLastNTrades,
 } from '../database/db';
 import { getBalanceView } from '../utils/balance';
-import { getDailyRiskSnapshot, pauseBot, resetDailyRiskLock, resumeBot } from '../strategy/riskManager';
+import { getDailyRiskSnapshot, getRiskGuardSettings, pauseBot, resetDailyRiskLock, resumeBot, toggleAutoPauseOnLimit } from '../strategy/riskManager';
 import { generateDailyReport } from '../reports/dailyReport';
 import { generateLearningDashboard, generateLearningReport } from '../reports/learningReport';
 import type { Signal, Trade } from '../database/models';
@@ -75,8 +75,9 @@ const MAIN_MENU_KEYBOARD: TelegramBot.ReplyKeyboardMarkup = {
     [{ text: '📊 Статус' }, { text: '⏸ Пауза' }],
     [{ text: '▶️ Возобновить' }, { text: '📦 Позиции' }],
     [{ text: '📈 Сигналы' }, { text: '📋 Отчет' }],
-    [{ text: '⚙️ Риск' }, { text: '🧠 Анализ' }],
-    [{ text: '🧠 Learning' }],
+    [{ text: '⚙️ Риск' }, { text: '🛡️ Риск-менеджмент' }],
+    [{ text: '⏸ Автопауза' }, { text: '⚙️ Настройки риска' }],
+    [{ text: '🧠 Анализ' }, { text: '🧠 Learning' }],
   ],
   resize_keyboard: true,
   is_persistent: true,
@@ -198,6 +199,21 @@ function registerCommands(): void {
     await sendRisk(msg.chat.id.toString());
   });
 
+  bot.onText(/^🛡️ Риск-менеджмент$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendRiskManagement(msg.chat.id.toString());
+  });
+
+  bot.onText(/^⏸ Автопауза$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendAutoPauseToggle(msg.chat.id.toString());
+  });
+
+  bot.onText(/^⚙️ Настройки риска$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendRiskSettings(msg.chat.id.toString());
+  });
+
   bot.onText(/^🧠 Анализ$/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
     await sendAnalyze(msg.chat.id.toString());
@@ -309,10 +325,31 @@ Auto trade: <b>${config.trading.autoTrade ? 'ON' : 'OFF'}</b>
 `.trim(), true);
 }
 
+function riskOnOff(value: boolean): string {
+  return value ? 'ВКЛ' : 'ВЫКЛ';
+}
+
+function riskManagementText(): string {
+  const state = getBotState();
+  const dailyRisk = getDailyRiskSnapshot();
+  const settings = getRiskGuardSettings();
+
+  return `
+🛡️ <b>Риск-менеджмент: ${riskOnOff(settings.riskGuardEnabled)}</b>
+Автопауза при лимитах: <b>${riskOnOff(settings.autoPauseOnLimit)}</b>
+Риск на сделку: <b>${settings.riskPerTrade}%</b>
+Макс. дневной убыток: <b>${settings.maxDailyLoss}%</b>
+Макс. убытков подряд: <b>${settings.maxLossStreak}</b>
+Текущий дневной убыток: <b>${dailyRisk.dailyLossPercent.toFixed(2)}%</b>
+Убытков подряд сейчас: <b>${state.consecutiveLosses}</b>
+`.trim();
+}
+
 async function sendRisk(chatId: string): Promise<void> {
   const state = getBotState();
   const dailyRisk = getDailyRiskSnapshot();
-  const riskLockOn = config.trading.isLive && dailyRisk.isLimitReached && state.isPaused;
+  const settings = getRiskGuardSettings();
+  const riskLockOn = settings.autoPauseOnLimit && dailyRisk.isLimitReached && state.isPaused;
   const tradeLines = dailyRisk.trades.length > 0
     ? dailyRisk.trades.slice(0, 4).map(trade =>
         `• #${trade.id} ${trade.symbol} ${trade.direction} ${trade.pnlPercent && trade.pnlPercent >= 0 ? '+' : ''}${(trade.pnlPercent ?? 0).toFixed(2)}%`
@@ -323,16 +360,45 @@ async function sendRisk(chatId: string): Promise<void> {
 📊 <b>Risk Status</b>
 
 Mode: <b>${dailyRisk.mode}</b>
+Risk Guard: <b>${settings.riskGuardEnabled ? 'ON' : 'OFF'}</b>
+Auto Pause: <b>${settings.autoPauseOnLimit ? 'ON' : 'OFF'}</b>
 Daily Net PnL: <b>${dailyRisk.dailyPnlPercent >= 0 ? '+' : ''}${dailyRisk.dailyPnlPercent.toFixed(2)}%</b>
 Closed Trades Today: <b>${dailyRisk.closedTradesCount}</b>
 Risk Lock: <b>${riskLockOn ? 'ON' : 'OFF'}</b>
 Paused Until: <b>${state.pausedUntil ?? '—'}</b>
-Daily Limit: <b>${config.trading.maxDailyLoss}%</b>
+Daily Limit: <b>${settings.maxDailyLoss}%</b>
+Loss streak: <b>${state.consecutiveLosses} / ${settings.maxLossStreak}</b>
 Daily limit behavior: <b>${dailyRisk.behavior}</b>
 Reason: <b>${riskLockOn ? (state.pauseReason ?? '—') : '—'}</b>
 
 Trades:
 ${tradeLines}
+`.trim(), true);
+}
+
+async function sendRiskManagement(chatId: string): Promise<void> {
+  await send(chatId, riskManagementText(), true);
+}
+
+async function sendRiskSettings(chatId: string): Promise<void> {
+  const settings = getRiskGuardSettings();
+  await send(chatId, `
+⚙️ <b>Настройки риска</b>
+
+Risk Guard: <b>${settings.riskGuardEnabled ? 'ON' : 'OFF'}</b>
+Auto Pause: <b>${settings.autoPauseOnLimit ? 'ON' : 'OFF'}</b>
+Risk per trade: <b>${settings.riskPerTrade}%</b>
+Max daily loss: <b>${settings.maxDailyLoss}%</b>
+Max loss streak: <b>${settings.maxLossStreak}</b>
+`.trim(), true);
+}
+
+async function sendAutoPauseToggle(chatId: string): Promise<void> {
+  const enabled = toggleAutoPauseOnLimit();
+  await send(chatId, `
+⏸ <b>Автопауза при лимитах: ${riskOnOff(enabled)}</b>
+
+Риск-менеджмент: <b>${riskOnOff(getRiskGuardSettings().riskGuardEnabled)}</b>
 `.trim(), true);
 }
 

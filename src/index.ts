@@ -26,6 +26,8 @@ async function bootstrap(): Promise<void> {
   logger.info(`   OKX API mode: ${config.okx.isDemo ? 'DEMO' : 'LIVE'}`);
   logger.info(`   Trade execution: ${config.trading.isLive ? 'LIVE' : 'PAPER'}`);
   logger.info(`   Auto trade: ${config.trading.autoTrade ? 'ON' : 'OFF'}`);
+  logger.info(`   🛡️ Risk Guard: ${config.trading.riskGuardEnabled ? 'enabled' : 'disabled'}`);
+  logger.info(`   ⏸ Auto Pause on limit: ${config.trading.autoPauseOnLimit ? 'enabled' : 'disabled'}`);
   logger.info(`   Symbols: ${config.trading.symbols.join(', ')}`);
   logger.info(`   Timeframes: ${config.trading.timeframes.join(', ')}`);
 
@@ -187,6 +189,33 @@ async function processSymbol(symbol: string): Promise<boolean> {
     return false;
   }
 
+}
+
+
+function detectMarketPhase(indicators?: IndicatorSnapshot): MarketPhase {
+  if (!indicators || !indicators.price) return 'UNKNOWN';
+
+  const atrRatio = indicators.atr / indicators.price;
+  const volumeRatio = getVolumeRatio({ ...indicators });
+
+  if (atrRatio > 0.035) return 'HIGH_VOLATILITY';
+  if (volumeRatio >= 1.5 && Math.abs(indicators.macdHistogram) > 0) return 'BREAKOUT';
+  if (indicators.trend === 'bullish') return 'TREND_UP';
+  if (indicators.trend === 'bearish') return 'TREND_DOWN';
+  if (indicators.trend === 'neutral') return 'RANGE';
+
+  return 'UNKNOWN';
+}
+
+function getVolumeRatio(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.volumeAvg) return 0;
+  return parseFloat((indicators.volumeCurrent / indicators.volumeAvg).toFixed(4));
+}
+
+function getTrendStrength(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.price) return 0;
+  const emaSpread = Math.abs(indicators.ema20 - indicators.ema200) / indicators.price;
+  return parseFloat((emaSpread * 100).toFixed(4));
 }
 
 

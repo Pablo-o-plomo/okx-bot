@@ -214,6 +214,22 @@ export async function getAccountBalance(): Promise<number> {
 }
 
 /**
+ * Get trading balance used by sizing/risk/execution.
+ */
+export async function getAccountBalance(): Promise<number> {
+  if (!config.trading.isLive) {
+    // Internal paper trading always uses the virtual SQLite balance.
+    return getPaperTradingBalance();
+  }
+
+  const okxBalance = await getOkxAccountBalance();
+  if (okxBalance !== null) return okxBalance;
+
+  const state = getBotState();
+  return state.totalBalance;
+}
+
+/**
  * Update paper balance after trade closes.
  */
 export function updatePaperBalance(pnlUsdt: number): void {

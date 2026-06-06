@@ -47,6 +47,8 @@ export const config = {
     mode: tradingMode as 'paper' | 'live',
     isLive: tradingMode === 'live',
     autoTrade: optionalBool(['AUTO_TRADE'], false),
+    riskGuardEnabled: optionalBool(['RISK_GUARD_ENABLED'], true),
+    autoPauseOnLimit: optionalBool(['AUTO_PAUSE_ON_LIMIT'], false),
     paperStartBalance: parseFloat(optionalEnv('PAPER_START_BALANCE', '1000')),
     symbols: optionalEnv(
       'SYMBOLS',
@@ -62,7 +64,7 @@ export const config = {
     riskPerTrade: parseFloat(optionalEnv('RISK_PER_TRADE', '1')),
     maxDailyLoss: parseFloat(optionalEnv('MAX_DAILY_LOSS', '3')),
     maxOpenPositions: parseInt(optionalEnv('MAX_OPEN_POSITIONS', '3')),
-    maxLossesInRow: parseInt(optionalEnv('MAX_LOSSES_IN_ROW', '3')),
+    maxLossesInRow: parseInt(optionalEnv('MAX_LOSS_STREAK', optionalEnv('MAX_LOSSES_IN_ROW', '3'))),
     minSignalConfidence: parseInt(
       optionalEnv('MIN_SIGNAL_CONFIDENCE', '6')
     ),
