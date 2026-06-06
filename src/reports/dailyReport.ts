@@ -3,6 +3,7 @@ import { getBalanceView } from '../utils/balance';
 import { formatDailyReport } from '../telegram/messages';
 import { broadcastMessage } from '../telegram/bot';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 
 export async function generateDailyReport(): Promise<string> {
   const today = new Date().toISOString().split('T')[0];
