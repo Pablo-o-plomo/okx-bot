@@ -4,8 +4,8 @@ import path from 'path';
 import cron from 'node-cron';
 import express from 'express';
 import { config } from './config';
-import { initDb, getOpenTrades, getLastNTrades } from './database/db';
-import { initTelegramBot, broadcastSignal, broadcastMessage, broadcastTradeClosed, broadcastTpHit, sendErrorAlert } from './telegram/bot';
+import { initDb, getOpenTrades, getLastNTrades, getRecentSignals } from './database/db';
+import { initTelegramBot, broadcastSignal, sendErrorAlert, recordScannerRun, broadcastScannerHeartbeat } from './telegram/bot';
 import { analyzeSymbol } from './strategy/signalEngine';
 import { checkRisk, calculatePositionSize } from './strategy/riskManager';
 import { monitorOpenTrades } from './strategy/tradeManager';
@@ -14,6 +14,7 @@ import { placeOrder } from './okx/trading';
 import { sendDailyReport } from './reports/dailyReport';
 import { runLearningAnalysis } from './reports/learningReport';
 import { logger } from './utils/logger';
+import type { IndicatorSnapshot, MarketPhase } from './database/models';
 
 // ─── Init ──────────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,9 @@ async function bootstrap(): Promise<void> {
   fs.mkdirSync(path.join(process.cwd(), 'logs'), { recursive: true });
 
   logger.info('🚀 Starting OKX Trading Bot...');
-  logger.info(`   Mode: ${config.trading.isLive ? '🔴 LIVE' : '📄 PAPER'}`);
+  logger.info(`   OKX API mode: ${config.okx.isDemo ? 'DEMO' : 'LIVE'}`);
+  logger.info(`   Trade execution: ${config.trading.isLive ? 'LIVE' : 'PAPER'}`);
+  logger.info(`   Auto trade: ${config.trading.autoTrade ? 'ON' : 'OFF'}`);
   logger.info(`   Symbols: ${config.trading.symbols.join(', ')}`);
   logger.info(`   Timeframes: ${config.trading.timeframes.join(', ')}`);
 
@@ -34,21 +37,16 @@ async function bootstrap(): Promise<void> {
 
   // 3. Express health check
   const app = express();
-  app.get('/health', (_, res) => res.json({ status: 'ok', mode: config.trading.isLive ? 'live' : 'paper' }));
+  app.get('/health', (_, res) => res.json({
+    status: 'ok',
+    okxApiMode: config.okx.isDemo ? 'demo' : 'live',
+    tradeExecution: config.trading.mode,
+    autoTrade: config.trading.autoTrade,
+  }));
   app.listen(config.server.port, () => logger.info(`🌐 Health check: http://localhost:${config.server.port}/health`));
 
   // 4. Start schedulers
   setupSchedulers();
-
-  await broadcastMessage(`
-🤖 <b>OKX Trading Bot запущен</b>
-
-Режим: <b>${config.trading.isLive ? '🔴 LIVE TRADING' : '📄 PAPER TRADING'}</b>
-Символы: ${config.trading.symbols.join(', ')}
-Тайм-фреймы: ${config.trading.timeframes.join(', ')}
-
-Бот начинает анализ рынка...
-  `.trim());
 
   logger.info('✅ Bot fully initialized');
 }
@@ -83,12 +81,19 @@ function setupSchedulers(): void {
     }
   });
 
+  // Premium feed heartbeat — every 30 minutes
+  cron.schedule('*/30 * * * *', async () => {
+    await broadcastScannerHeartbeat();
+  });
+
   logger.info('⏰ Schedulers started');
 }
 
 // ─── Signal Scan ──────────────────────────────────────────────────────────────
 
 async function runSignalScan(): Promise<void> {
+  const signalsBefore = getRecentSignals(100).length;
+
   for (const symbol of config.trading.symbols) {
     try {
       await processSymbol(symbol);
@@ -97,24 +102,33 @@ async function runSignalScan(): Promise<void> {
       await sendErrorAlert(err.message, `Signal scan: ${symbol}`).catch(() => {});
     }
   }
+
+  const signalsAfter = getRecentSignals(100).length;
+  const newSignalsFound = Math.max(signalsAfter - signalsBefore, 0);
+
+  recordScannerRun(
+    config.trading.symbols.length,
+    newSignalsFound,
+    getOpenTrades().length,
+  );
 }
 
-async function processSymbol(symbol: string): Promise<void> {
+async function processSymbol(symbol: string): Promise<boolean> {
   const signal = await analyzeSymbol(symbol);
-  if (!signal) return;
+  if (!signal) return false;
 
   // Risk check
   const riskCheck = await checkRisk(signal);
   if (!riskCheck.allowed) {
     logger.info(`⛔ Signal rejected for ${symbol}: ${riskCheck.reason}`);
-    return;
+    return false;
   }
 
   // Calculate position size
   signal.positionSize = await calculatePositionSize(signal);
   if (signal.positionSize <= 0) {
     logger.warn(`Position size is 0 for ${symbol}, skipping`);
-    return;
+    return false;
   }
 
   // Save signal to DB
@@ -123,6 +137,11 @@ async function processSymbol(symbol: string): Promise<void> {
 
   // Broadcast to Telegram
   await broadcastSignal(signal);
+
+  if (config.trading.isLive && !config.trading.autoTrade) {
+    logger.info(`AUTO_TRADE=false; signal published without placing order for ${symbol}`);
+    return false;
+  }
 
   // Place paper/live order
   try {
@@ -144,13 +163,49 @@ async function processSymbol(symbol: string): Promise<void> {
       status: 'open',
       entryReasons: signal.reasons,
       indicatorsAtEntry: signal.indicators,
+      marketPhase: detectMarketPhase(signal.indicators),
+      signalConfidence: signal.confidence,
+      scannerScore: signal.confidence,
+      volumeRatio: getVolumeRatio(signal.indicators),
+      atrAtEntry: signal.indicators?.atr ?? 0,
+      rsiAtEntry: signal.indicators?.rsi ?? 0,
+      trendStrength: getTrendStrength(signal.indicators),
     });
 
     logger.info(`✅ Trade opened: ${signal.direction} ${signal.symbol} @ ${signal.entryPrice}`);
+    return true;
   } catch (err: any) {
     logger.error(`Failed to open trade for ${symbol}: ${err.message}`);
     await sendErrorAlert(err.message, `Order placement: ${symbol}`);
+    return false;
   }
+}
+
+
+function detectMarketPhase(indicators?: IndicatorSnapshot): MarketPhase {
+  if (!indicators || !indicators.price) return 'UNKNOWN';
+
+  const atrRatio = indicators.atr / indicators.price;
+  const volumeRatio = getVolumeRatio({ ...indicators });
+
+  if (atrRatio > 0.035) return 'HIGH_VOLATILITY';
+  if (volumeRatio >= 1.5 && Math.abs(indicators.macdHistogram) > 0) return 'BREAKOUT';
+  if (indicators.trend === 'bullish') return 'TREND_UP';
+  if (indicators.trend === 'bearish') return 'TREND_DOWN';
+  if (indicators.trend === 'neutral') return 'RANGE';
+
+  return 'UNKNOWN';
+}
+
+function getVolumeRatio(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.volumeAvg) return 0;
+  return parseFloat((indicators.volumeCurrent / indicators.volumeAvg).toFixed(4));
+}
+
+function getTrendStrength(indicators?: IndicatorSnapshot): number {
+  if (!indicators?.price) return 0;
+  const emaSpread = Math.abs(indicators.ema20 - indicators.ema200) / indicators.price;
+  return parseFloat((emaSpread * 100).toFixed(4));
 }
 
 // ─── Unhandled errors ─────────────────────────────────────────────────────────
