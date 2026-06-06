@@ -220,6 +220,7 @@ async function sendStatus(chatId: string): Promise<void> {
   const balance = await getDisplayBalance();
   const okxBalance = config.trading.isLive ? undefined : await getOkxReferenceBalance();
   await send(chatId, formatStatusMessage({
+    okxApiMode: config.okx.isDemo ? 'DEMO' : 'LIVE',
     mode: config.trading.isLive ? 'LIVE' : 'PAPER',
     isPaused: state.isPaused,
     openPositions: openTrades.length,

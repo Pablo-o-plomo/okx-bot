@@ -213,5 +213,6 @@ export interface BotState {
   dailyLossPercent: number;
   lastDailyReset: string;
   totalBalance: number;
-  mode: 'demo' | 'live';
+  paperStartBalance?: number;
+  mode: 'paper' | 'live' | 'demo';
 }

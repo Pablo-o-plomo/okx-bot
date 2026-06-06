@@ -1,6 +1,7 @@
 import type { Signal, Trade, AnalysisReport, Direction, LearningDashboard } from '../database/models';
 
 interface StatusMessageInput {
+  okxApiMode: 'LIVE' | 'DEMO';
   mode: 'PAPER' | 'LIVE';
   isPaused: boolean;
   openPositions: number;
@@ -135,7 +136,8 @@ export function formatStatusMessage(input: StatusMessageInput): string {
     return `
 🔴 <b>BOT PAUSED</b>
 
-Mode: <b>${input.mode}</b>
+OKX API: <b>${input.okxApiMode}</b>
+Trade mode: <b>${input.mode}</b>
 Scanner: <b>${scannerState}</b>
 Positions: <b>${input.openPositions}</b>
 ${statusBalanceLines(input)}
@@ -151,7 +153,8 @@ Last scan: <b>${lastScan}</b>
   return `
 🟢 <b>BOT ACTIVE</b>
 
-Mode: <b>${input.mode}</b>
+OKX API: <b>${input.okxApiMode}</b>
+Trade mode: <b>${input.mode}</b>
 Scanner: <b>${scannerState}</b>
 Positions: <b>${input.openPositions}</b>
 ${statusBalanceLines(input)}

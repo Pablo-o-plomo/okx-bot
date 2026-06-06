@@ -23,6 +23,7 @@ export function initDb(): void {
 
   createTables();
   migrateTables();
+  syncBotStateMode();
   logger.info(`📦 Database initialized: ${dbPath}`);
 }
 
@@ -121,26 +122,33 @@ function createTables(): void {
       daily_loss_percent REAL NOT NULL DEFAULT 0,
       last_daily_reset TEXT NOT NULL DEFAULT CURRENT_DATE,
       total_balance REAL NOT NULL DEFAULT 1000,
+      paper_start_balance REAL,
       mode TEXT NOT NULL DEFAULT 'demo',
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
-  db.prepare('INSERT OR IGNORE INTO bot_state (id, total_balance, mode) VALUES (1, ?, ?)').run(
-    config.trading.paperStartBalance,
-    config.trading.mode,
-  );
-
-  syncBotStateMode();
+  db.prepare('INSERT OR IGNORE INTO bot_state (id) VALUES (1)').run();
 }
 
 function syncBotStateMode(): void {
-  const state = db.prepare('SELECT mode FROM bot_state WHERE id = 1').get() as { mode?: string } | undefined;
-  if (config.trading.mode === 'paper' && state?.mode !== 'paper') {
-    db.prepare('UPDATE bot_state SET total_balance = ?, mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1').run(
-      config.trading.paperStartBalance,
-      config.trading.mode,
-    );
+  const state = db.prepare('SELECT mode, paper_start_balance FROM bot_state WHERE id = 1').get() as {
+    mode?: string;
+    paper_start_balance?: number | null;
+  } | undefined;
+
+  if (config.trading.mode === 'paper') {
+    const storedPaperStartBalance = state?.paper_start_balance ?? null;
+    if (state?.mode !== 'paper' || storedPaperStartBalance !== config.trading.paperStartBalance) {
+      db.prepare(`
+        UPDATE bot_state SET total_balance = ?, paper_start_balance = ?, mode = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = 1
+      `).run(
+        config.trading.paperStartBalance,
+        config.trading.paperStartBalance,
+        config.trading.mode,
+      );
+    }
     return;
   }
 
@@ -150,6 +158,7 @@ function syncBotStateMode(): void {
 }
 
 function migrateTables(): void {
+  addColumnIfMissing('bot_state', 'paper_start_balance', 'REAL');
   addColumnIfMissing('trades', 'tp1_hit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('trades', 'tp2_hit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('trades', 'tp3_hit', 'INTEGER NOT NULL DEFAULT 0');
@@ -412,6 +421,7 @@ export function getBotState(): BotState {
     dailyLossPercent: row.daily_loss_percent,
     lastDailyReset: row.last_daily_reset,
     totalBalance: row.total_balance,
+    paperStartBalance: row.paper_start_balance ?? undefined,
     mode: row.mode,
   };
 }
@@ -423,7 +433,7 @@ export function updateBotState(partial: Partial<BotState>): void {
     UPDATE bot_state SET
       is_paused = ?, paused_until = ?, pause_reason = ?,
       consecutive_losses = ?, daily_loss_percent = ?,
-      last_daily_reset = ?, total_balance = ?, mode = ?,
+      last_daily_reset = ?, total_balance = ?, paper_start_balance = ?, mode = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = 1
   `).run(
@@ -434,6 +444,7 @@ export function updateBotState(partial: Partial<BotState>): void {
     merged.dailyLossPercent,
     merged.lastDailyReset,
     merged.totalBalance,
+    merged.paperStartBalance ?? null,
     merged.mode,
   );
 }
