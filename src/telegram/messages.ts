@@ -286,27 +286,51 @@ export function formatDailyReport(
   const closed = trades.filter(t => t.status !== 'open');
   const wins = closed.filter(t => t.result === 'win');
   const losses = closed.filter(t => t.result === 'loss');
-  const totalPnl = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0);
-  const totalPnlUsdt = closed.reduce((a, t) => a + (t.pnlUsdt ?? 0), 0);
+  const totalTradePnlPercent = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0);
+  const averageTradePercent = closed.length > 0 ? totalTradePnlPercent / closed.length : 0;
   const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
-  const balanceLines = options.mode === 'PAPER'
-    ? [
-      `Paper balance: <b>${formatDisplayBalance(balance)}</b>`,
-      `OKX balance: <b>${formatDisplayBalance(options.okxBalance ?? null)}</b>`,
-    ].join('\n')
-    : `Balance: <b>${formatDisplayBalance(balance)}</b>`;
+  const resultUsdt = balance === null || startBalance === null ? null : balance - startBalance;
+  const equityPercent = startBalance && balance !== null
+    ? ((balance - startBalance) / startBalance) * 100
+    : 0;
+  const accountTitle = options.mode === 'PAPER' ? '💼 <b>PAPER ACCOUNT</b>' : '💼 <b>LIVE ACCOUNT</b>';
+  const okxReferenceLine = options.mode === 'PAPER'
+    ? `
+OKX reference balance:
+<b>${formatDisplayBalance(options.okxBalance ?? null)}</b>`
+    : '';
 
   return `
 📋 <b>DAILY DESK REPORT</b>
 
 Date: <b>${escapeHtml(date)}</b>
-${balanceLines}
-Δ Balance: <b>${balance === null || startBalance === null ? 'unavailable' : `${signed(balance - startBalance)} USDT`}</b>
 
-Trades: <b>${closed.length}</b>
-Wins / Losses: <b>${wins.length} / ${losses.length}</b>
-Winrate: <b>${winRate.toFixed(1)}%</b>
-P&L: <b>${signed(totalPnl)}%</b> / <b>${signed(totalPnlUsdt)} USDT</b>
+${accountTitle}
+
+Start:
+<b>${formatDisplayBalance(startBalance)}</b>
+
+Current:
+<b>${formatDisplayBalance(balance)}</b>
+
+Result:
+<b>${resultUsdt === null ? 'unavailable' : `${signed(resultUsdt)} USDT (${signed(equityPercent)}%)`}</b>
+
+━━━━━━━━━━━━━━
+
+Trades:
+<b>${closed.length}</b>
+
+Wins / Losses:
+<b>${wins.length} / ${losses.length}</b>
+
+Winrate:
+<b>${winRate.toFixed(1)}%</b>
+
+━━━━━━━━━━━━━━
+
+Average trade:
+<b>${signed(averageTradePercent)}%</b>${okxReferenceLine}
 `.trim();
 }
 

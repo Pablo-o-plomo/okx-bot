@@ -188,11 +188,12 @@ async function processSymbol(symbol: string): Promise<boolean> {
   }
 }
 
+
 function detectMarketPhase(indicators?: IndicatorSnapshot): MarketPhase {
   if (!indicators || !indicators.price) return 'UNKNOWN';
 
   const atrRatio = indicators.atr / indicators.price;
-  const volumeRatio = getVolumeRatio(indicators);
+  const volumeRatio = getVolumeRatio({ ...indicators });
 
   if (atrRatio > 0.035) return 'HIGH_VOLATILITY';
   if (volumeRatio >= 1.5 && Math.abs(indicators.macdHistogram) > 0) return 'BREAKOUT';
