@@ -198,16 +198,29 @@ export async function getOkxAccountBalance(): Promise<number | null> {
  */
 export async function getAccountBalance(): Promise<number> {
   if (!config.trading.isLive) {
-    // Internal paper trading always uses the virtual SQLite balance.
     const state = getBotState();
+    const paperStartBalance = Number(process.env.PAPER_START_BALANCE || 1000);
+
+    if (!state.totalBalance || state.totalBalance < paperStartBalance) {
+      updateBotState({
+        totalBalance: paperStartBalance,
+      });
+
+      return paperStartBalance;
+    }
+
     return state.totalBalance;
   }
 
   const okxBalance = await getOkxAccountBalance();
-  if (okxBalance !== null) return okxBalance;
+
+  if (okxBalance !== null) {
+    return okxBalance;
+  }
 
   const state = getBotState();
-  return state.totalBalance;
+
+  return state.totalBalance || Number(process.env.PAPER_START_BALANCE || 1000);
 }
 
 /**
