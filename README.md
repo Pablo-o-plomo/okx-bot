@@ -6,8 +6,8 @@
 
 - **Анализ рынка**: EMA 20/50/200, RSI, MACD, ATR, объемы, уровни поддержки/сопротивления, пробои
 - **Multi-timeframe**: анализ на 3 тайм-фреймах одновременно
-- **Paper trading**: по умолчанию, без реальных ордеров
-- **Live trading**: включается через `LIVE_TRADING=true`
+- **Live market data + internal paper trading**: реальные данные OKX, виртуальные сделки в SQLite, без реальных ордеров
+- **Live trading**: включается через `TRADING_MODE=live` и `AUTO_TRADE=true`
 - **Риск-менеджмент**: 1% на сделку, лимит дневного убытка, пауза после серии потерь
 - **Telegram-уведомления**: сигналы, TP/SL, дневной отчет
 - **Журнал сделок**: SQLite, теги ошибок, анализ каждые 20 сделок
@@ -37,8 +37,14 @@ TELEGRAM_BOT_TOKEN=<токен от @BotFather>
 TELEGRAM_CHAT_ID=<ID канала/группы, например -100123456789>
 TELEGRAM_ADMIN_ID=<ваш личный chat ID>
 
-# Для paper trading — OKX API не обязателен
-# Для live trading — нужны ключи OKX
+# Текущий тестовый режим: real OKX market data, internal paper trading, no real orders
+OKX_DEMO=false
+TRADING_MODE=paper
+AUTO_TRADE=false
+PAPER_START_BALANCE=1000
+
+# OKX API можно использовать read-only для реальных market/account data
+# Для настоящей торговли нужны ключи OKX с правами trade
 OKX_API_KEY=
 OKX_API_SECRET=
 OKX_API_PASSPHRASE=
@@ -67,8 +73,11 @@ npm start
 | `OKX_API_KEY` | — | Ключ OKX API |
 | `OKX_API_SECRET` | — | Секрет OKX API |
 | `OKX_API_PASSPHRASE` | — | Пароль OKX API |
-| `LIVE_TRADING` | `false` | Включить реальную торговлю |
-| `DEMO_TRADING` | `true` | Использовать OKX simulated trading |
+| `OKX_DEMO` | `false` | OKX demo/simulated API; только при `true` добавляется `x-simulated-trading: 1` |
+| `OKX_SIMULATED` | `false` | Alias для `OKX_DEMO` |
+| `TRADING_MODE` | `paper` | `paper` = внутренние виртуальные сделки, `live` = режим реального исполнения |
+| `AUTO_TRADE` | `false` | Разрешает отправку реальных ордеров только при `TRADING_MODE=live` |
+| `PAPER_START_BALANCE` | `1000` | Стартовый виртуальный баланс для SQLite paper trading |
 | `SYMBOLS` | `BTC-USDT-SWAP,...` | Инструменты через запятую |
 | `TIMEFRAMES` | `15m,1H,4H` | Тайм-фреймы (первый — основной) |
 | `RISK_PER_TRADE` | `1` | Риск на сделку, % |
@@ -78,6 +87,15 @@ npm start
 | `MIN_SIGNAL_CONFIDENCE` | `6` | Мин. уверенность сигнала (1-10) |
 | `AUTO_OPTIMIZE` | `false` | Авто-применение рекомендаций |
 | `DATABASE_URL` | `./trading.db` | Путь к SQLite |
+
+
+### Режимы OKX и исполнения
+
+`OKX_DEMO` / `OKX_SIMULATED` управляют только режимом API OKX. Header `x-simulated-trading: 1` добавляется **только** если одна из этих переменных равна `true`.
+
+`TRADING_MODE=paper` означает: real OKX market data, internal paper trading, no real orders. Бот анализирует рынок, моделирует сделки внутри себя, сопровождает TP/SL и пишет PnL/learning в локальную SQLite базу. Торговый баланс, риск, размер позиции, PnL и дневные лимиты считаются от `PAPER_START_BALANCE` / SQLite paper balance, а реальный OKX balance используется только как справочная информация в Telegram.
+
+`TRADING_MODE=live` не отправляет реальные ордера сам по себе. Реальное исполнение разрешено только при `AUTO_TRADE=true`.
 
 ## 📊 Архитектура
 
@@ -127,7 +145,7 @@ src/
 ## 🔒 Безопасность
 
 - API Secret никогда не логируется
-- Реальная торговля отключена по умолчанию (`LIVE_TRADING=false`)
+- Реальная торговля отключена по умолчанию (`TRADING_MODE=paper`, `AUTO_TRADE=false`)
 - Retry при ошибках API (3 попытки с экспоненциальной задержкой)
 - Все непойманные ошибки отправляются в Telegram admin
 - Защита от дублирования позиций по одному инструменту
