@@ -140,11 +140,13 @@ function syncBotStateMode(): void {
 
   if (config.trading.mode === 'paper') {
     const storedPaperStartBalance = state?.paper_start_balance ?? null;
-    const storedTradingBalance = state?.total_balance ?? 0;
-    if (state?.mode !== 'paper'
+    const storedTradingBalance = state?.total_balance ?? null;
+    const shouldInitializePaperBalance = state?.mode !== 'paper'
       || storedPaperStartBalance !== config.trading.paperStartBalance
-      || storedTradingBalance <= 0
-      || storedTradingBalance < config.trading.paperStartBalance) {
+      || storedTradingBalance === null
+      || !Number.isFinite(storedTradingBalance);
+
+    if (shouldInitializePaperBalance) {
       db.prepare(`
         UPDATE bot_state SET total_balance = ?, paper_start_balance = ?, mode = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = 1
@@ -433,12 +435,10 @@ export function getBotState(): BotState {
 
 export function getPaperTradingBalance(): number {
   const state = getBotState();
-  const shouldReset = config.trading.mode === 'paper'
-    && (!Number.isFinite(state.totalBalance)
-      || state.totalBalance <= 0
-      || state.totalBalance < config.trading.paperStartBalance);
+  const shouldInitialize = config.trading.mode === 'paper'
+    && (!Number.isFinite(state.totalBalance));
 
-  if (shouldReset) {
+  if (shouldInitialize) {
     updateBotState({
       totalBalance: config.trading.paperStartBalance,
       paperStartBalance: config.trading.paperStartBalance,
