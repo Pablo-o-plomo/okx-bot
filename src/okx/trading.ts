@@ -191,26 +191,6 @@ export async function getOkxAccountBalance(): Promise<number | null> {
     logger.warn(`Failed to fetch OKX balance: ${err.message}`);
     return null;
   }
-
-  const state = getBotState();
-
-  return state.totalBalance || Number(process.env.PAPER_START_BALANCE || 1000);
-}
-
-/**
- * Get trading balance used by sizing/risk/execution.
- */
-export async function getAccountBalance(): Promise<number> {
-  if (!config.trading.isLive) {
-    // Internal paper trading always uses the virtual SQLite balance.
-    return getPaperTradingBalance();
-  }
-
-  const okxBalance = await getOkxAccountBalance();
-  if (okxBalance !== null) return okxBalance;
-
-  const state = getBotState();
-  return state.totalBalance;
 }
 
 /**
