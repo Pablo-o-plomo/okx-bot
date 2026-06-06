@@ -1,5 +1,5 @@
 import { getBotState } from '../database/db';
-import { getAccountBalance } from '../okx/trading';
+import { getAccountBalance, getOkxAccountBalance } from '../okx/trading';
 import { config } from '../config';
 import { logger } from './logger';
 
@@ -14,4 +14,8 @@ export async function getDisplayBalance(): Promise<number | null> {
     logger.warn(`Failed to fetch display balance: ${err.message}`);
     return null;
   }
+}
+
+export async function getOkxReferenceBalance(): Promise<number | null> {
+  return getOkxAccountBalance();
 }

@@ -5,6 +5,7 @@ interface StatusMessageInput {
   isPaused: boolean;
   openPositions: number;
   balance: number | null;
+  okxBalance?: number | null;
   consecutiveLosses: number;
   pauseReason?: string;
   symbolsCount: number;
@@ -38,6 +39,17 @@ function directionStyle(direction: Direction): string {
 
 function formatDisplayBalance(balance: number | null): string {
   return balance === null ? 'unavailable' : `${balance.toFixed(2)} USDT`;
+}
+
+function statusBalanceLines(input: StatusMessageInput): string {
+  if (input.mode === 'PAPER') {
+    return [
+      `Paper balance: <b>${formatDisplayBalance(input.balance)}</b>`,
+      `OKX balance: <b>${formatDisplayBalance(input.okxBalance ?? null)}</b>`,
+    ].join('\n');
+  }
+
+  return `Balance: <b>${formatDisplayBalance(input.balance)}</b>`;
 }
 
 function signed(value: number | undefined, digits = 2): string {
@@ -126,7 +138,7 @@ export function formatStatusMessage(input: StatusMessageInput): string {
 Mode: <b>${input.mode}</b>
 Scanner: <b>${scannerState}</b>
 Positions: <b>${input.openPositions}</b>
-Balance: <b>${formatDisplayBalance(input.balance)}</b>
+${statusBalanceLines(input)}
 Loss streak: <b>${input.consecutiveLosses}</b>
 
 Reason:
@@ -142,7 +154,7 @@ Last scan: <b>${lastScan}</b>
 Mode: <b>${input.mode}</b>
 Scanner: <b>${scannerState}</b>
 Positions: <b>${input.openPositions}</b>
-Balance: <b>${formatDisplayBalance(input.balance)}</b>
+${statusBalanceLines(input)}
 Loss streak: <b>${input.consecutiveLosses}</b>
 
 🪙 Symbols: <b>${input.symbolsCount}</b>

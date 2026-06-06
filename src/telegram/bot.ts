@@ -20,7 +20,7 @@ import {
   getRecentSignals,
   getLastNTrades,
 } from '../database/db';
-import { getDisplayBalance } from '../utils/balance';
+import { getDisplayBalance, getOkxReferenceBalance } from '../utils/balance';
 import { getDailyRiskSnapshot, pauseBot, resetDailyRiskLock, resumeBot } from '../strategy/riskManager';
 import { generateDailyReport } from '../reports/dailyReport';
 import { generateLearningDashboard, generateLearningReport } from '../reports/learningReport';
@@ -218,11 +218,13 @@ async function sendStatus(chatId: string): Promise<void> {
   const state = getBotState();
   const openTrades = getOpenTrades();
   const balance = await getDisplayBalance();
+  const okxBalance = config.trading.isLive ? undefined : await getOkxReferenceBalance();
   await send(chatId, formatStatusMessage({
     mode: config.trading.isLive ? 'LIVE' : 'PAPER',
     isPaused: state.isPaused,
     openPositions: openTrades.length,
     balance,
+    okxBalance,
     consecutiveLosses: state.consecutiveLosses,
     pauseReason: state.pauseReason,
     symbolsCount: config.trading.symbols.length,
@@ -233,10 +235,13 @@ async function sendStatus(chatId: string): Promise<void> {
 
 async function sendBalance(chatId: string): Promise<void> {
   const balance = await getDisplayBalance();
+  const okxBalance = config.trading.isLive ? undefined : await getOkxReferenceBalance();
+  const okxLine = config.trading.isLive ? '' : `\nOKX balance: <b>${formatBalance(okxBalance ?? null)}</b>`;
+
   await send(chatId, `
 💰 <b>BALANCE</b>
 
-Available: <b>${formatBalance(balance)}</b>
+${config.trading.isLive ? 'Balance' : 'Paper balance'}: <b>${formatBalance(balance)}</b>${okxLine}
 Mode: <b>${config.trading.isLive ? 'LIVE' : 'PAPER'}</b>
 `.trim(), true);
 }

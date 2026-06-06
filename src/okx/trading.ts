@@ -175,8 +175,26 @@ export async function closePosition(
   };
 }
 
+async function fetchOkxUsdtBalance(): Promise<number> {
+  const data = await okxClient.privateGet<any[]>('/api/v5/account/balance', { ccy: 'USDT' });
+  const usdtBal = data[0]?.details?.find((d: any) => d.ccy === 'USDT');
+  return parseFloat(usdtBal?.availBal || '0');
+}
+
 /**
- * Get account balance from OKX.
+ * Get real OKX account balance for display/reference purposes.
+ */
+export async function getOkxAccountBalance(): Promise<number | null> {
+  try {
+    return await fetchOkxUsdtBalance();
+  } catch (err: any) {
+    logger.warn(`Failed to fetch OKX balance: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Get trading balance used by sizing/risk/execution.
  */
 export async function getAccountBalance(): Promise<number> {
   if (!config.trading.isLive) {
@@ -185,15 +203,11 @@ export async function getAccountBalance(): Promise<number> {
     return state.totalBalance;
   }
 
-  try {
-    const data = await okxClient.privateGet<any[]>('/api/v5/account/balance', { ccy: 'USDT' });
-    const usdtBal = data[0]?.details?.find((d: any) => d.ccy === 'USDT');
-    return parseFloat(usdtBal?.availBal || '0');
-  } catch (err: any) {
-    logger.warn(`Failed to fetch balance: ${err.message}`);
-    const state = getBotState();
-    return state.totalBalance;
-  }
+  const okxBalance = await getOkxAccountBalance();
+  if (okxBalance !== null) return okxBalance;
+
+  const state = getBotState();
+  return state.totalBalance;
 }
 
 /**

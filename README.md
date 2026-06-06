@@ -93,7 +93,7 @@ npm start
 
 `OKX_DEMO` / `OKX_SIMULATED` управляют только режимом API OKX. Header `x-simulated-trading: 1` добавляется **только** если одна из этих переменных равна `true`.
 
-`TRADING_MODE=paper` означает: real OKX market data, internal paper trading, no real orders. Бот анализирует рынок, моделирует сделки внутри себя, сопровождает TP/SL и пишет PnL/learning в локальную SQLite базу.
+`TRADING_MODE=paper` означает: real OKX market data, internal paper trading, no real orders. Бот анализирует рынок, моделирует сделки внутри себя, сопровождает TP/SL и пишет PnL/learning в локальную SQLite базу. Торговый баланс, риск, размер позиции, PnL и дневные лимиты считаются от `PAPER_START_BALANCE` / SQLite paper balance, а реальный OKX balance используется только как справочная информация в Telegram.
 
 `TRADING_MODE=live` не отправляет реальные ордера сам по себе. Реальное исполнение разрешено только при `AUTO_TRADE=true`.
 

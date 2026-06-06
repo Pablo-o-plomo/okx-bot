@@ -130,31 +130,22 @@ function createTables(): void {
     config.trading.paperStartBalance,
     config.trading.mode,
   );
+
+  syncBotStateMode();
 }
 
-function migrateTables(): void {
-  addColumnIfMissing('trades', 'tp1_hit', 'INTEGER NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'tp2_hit', 'INTEGER NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'tp3_hit', 'INTEGER NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'tp1_hit_at', 'TEXT');
-  addColumnIfMissing('trades', 'tp2_hit_at', 'TEXT');
-  addColumnIfMissing('trades', 'tp3_hit_at', 'TEXT');
-  addColumnIfMissing('trades', 'max_profit_percent', 'REAL NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'max_drawdown_percent', 'REAL NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'holding_time_minutes', 'INTEGER');
-  addColumnIfMissing('trades', 'market_phase', "TEXT NOT NULL DEFAULT 'UNKNOWN'");
-  addColumnIfMissing('trades', 'signal_confidence', 'REAL NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'scanner_score', 'REAL NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'volume_ratio', 'REAL NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'atr_at_entry', 'REAL NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'rsi_at_entry', 'REAL NOT NULL DEFAULT 0');
-  addColumnIfMissing('trades', 'trend_strength', 'REAL NOT NULL DEFAULT 0');
-}
+function syncBotStateMode(): void {
+  const state = db.prepare('SELECT mode FROM bot_state WHERE id = 1').get() as { mode?: string } | undefined;
+  if (config.trading.mode === 'paper' && state?.mode !== 'paper') {
+    db.prepare('UPDATE bot_state SET total_balance = ?, mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1').run(
+      config.trading.paperStartBalance,
+      config.trading.mode,
+    );
+    return;
+  }
 
-function addColumnIfMissing(table: string, column: string, definition: string): void {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (!columns.some(col => col.name === column)) {
-    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  if (state?.mode !== config.trading.mode) {
+    db.prepare('UPDATE bot_state SET mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1').run(config.trading.mode);
   }
 }
 
