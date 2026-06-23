@@ -4,7 +4,7 @@ import path from 'path';
 import cron from 'node-cron';
 import express from 'express';
 import { config } from './config';
-import { initDb, getOpenTrades, getLastNTrades, getRecentSignals, getPaperTradingBalance } from './database/db';
+import { initDb, getOpenTrades, getRecentSignals, getPaperTradingBalance, getLastAnalyzedTradeId, setLastAnalyzedTradeId, countNewClosedTrades, getMaxClosedTradeId } from './database/db';
 import { initTelegramBot, broadcastSignal, sendErrorAlert, recordScannerRun, broadcastScannerHeartbeat } from './telegram/bot';
 import { analyzeSymbol } from './strategy/signalEngine';
 import { checkRisk, calculatePositionSize } from './strategy/riskManager';
@@ -80,11 +80,20 @@ function setupSchedulers(): void {
     await sendDailyReport();
   });
 
-  // Learning analysis — every 20 closed trades (checked every hour)
+  // Learning analysis — triggered when 20+ new closed trades accumulate since last run
   cron.schedule('0 * * * *', async () => {
-    const closed = getLastNTrades(20);
-    if (closed.length >= 20 && closed.length % 20 === 0) {
-      await runLearningAnalysis();
+    const lastId = getLastAnalyzedTradeId();
+    const newClosed = countNewClosedTrades(lastId);
+    if (newClosed >= 20) {
+      const maxId = getMaxClosedTradeId();
+      logger.info(`📚 Learning analysis triggered: ${newClosed} new closed trades since trade #${lastId}`);
+      try {
+        await runLearningAnalysis();
+        setLastAnalyzedTradeId(maxId);
+        logger.info(`📚 Learning marker updated to trade #${maxId}`);
+      } catch (err: any) {
+        logger.error(`📚 Learning analysis failed: ${err.message}`);
+      }
     }
   });
 
@@ -134,7 +143,7 @@ async function processSymbol(symbol: string): Promise<boolean> {
   // Calculate position size
   signal.positionSize = await calculatePositionSize(signal);
   if (signal.positionSize <= 0) {
-    logger.warn(`Position size is 0 for ${symbol}, skipping`);
+    logger.warn(`⚠️ Position size 0 for ${symbol} — signal skipped (balance too low for minimum contract size or slDistance=0)`);
     return false;
   }
 
@@ -210,7 +219,7 @@ function getVolumeRatio(indicators?: IndicatorSnapshot): number {
 }
 
 function getTrendStrength(indicators?: IndicatorSnapshot): number {
-  if (!indicators?.price) return 0;
+  if (!indicators?.price || indicators.ema200 === null) return 0;
   const emaSpread = Math.abs(indicators.ema20 - indicators.ema200) / indicators.price;
   return parseFloat((emaSpread * 100).toFixed(4));
 }
@@ -225,7 +234,7 @@ process.on('unhandledRejection', (reason: any) => {
 process.on('uncaughtException', (err) => {
   logger.error(`Uncaught exception: ${err.message}`);
   sendErrorAlert(err.message, 'uncaughtException').catch(() => {});
-  // Don't exit — keep bot running
+  process.exit(1);
 });
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────

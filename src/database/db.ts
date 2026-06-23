@@ -164,6 +164,8 @@ function syncBotStateMode(): void {
 
 function migrateTables(): void {
   addColumnIfMissing('bot_state', 'paper_start_balance', 'REAL');
+  addColumnIfMissing('bot_state', 'last_analyzed_trade_id', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('trades', 'sl_algo_id', 'TEXT');
   addColumnIfMissing('trades', 'tp1_hit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('trades', 'tp2_hit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('trades', 'tp3_hit', 'INTEGER NOT NULL DEFAULT 0');
@@ -396,7 +398,12 @@ function rowToTrade(row: any): Trade {
     indicatorsAtEntry: row.indicators_at_entry ? JSON.parse(row.indicators_at_entry) : undefined,
     openedAt: row.opened_at,
     closedAt: row.closed_at ?? undefined,
+    slAlgoId: row.sl_algo_id ?? undefined,
   };
+}
+
+export function updateTradeSlAlgoId(tradeId: number, algoId: string | null): void {
+  db.prepare('UPDATE trades SET sl_algo_id = ? WHERE id = ?').run(algoId, tradeId);
 }
 
 // ─── Analysis Reports ─────────────────────────────────────────────────────────
@@ -471,4 +478,44 @@ export function updateBotState(partial: Partial<BotState>): void {
     merged.paperStartBalance ?? null,
     merged.mode,
   );
+}
+
+// ─── Learning Analysis Marker ─────────────────────────────────────────────────
+
+/**
+ * Returns the max trade ID that was current when the last learning analysis ran.
+ * Zero if analysis has never run (new bot or first start).
+ */
+export function getLastAnalyzedTradeId(): number {
+  const row = db.prepare('SELECT last_analyzed_trade_id FROM bot_state WHERE id = 1').get() as
+    | { last_analyzed_trade_id: number }
+    | undefined;
+  return row?.last_analyzed_trade_id ?? 0;
+}
+
+/**
+ * Persists the max trade ID seen at the time of a completed learning analysis.
+ */
+export function setLastAnalyzedTradeId(tradeId: number): void {
+  db.prepare('UPDATE bot_state SET last_analyzed_trade_id = ? WHERE id = 1').run(tradeId);
+}
+
+/**
+ * Counts closed trades (status != 'open') with id > sinceTradeId.
+ */
+export function countNewClosedTrades(sinceTradeId: number): number {
+  const row = db.prepare(
+    "SELECT COUNT(*) as cnt FROM trades WHERE status != 'open' AND id > ?",
+  ).get(sinceTradeId) as { cnt: number };
+  return row.cnt;
+}
+
+/**
+ * Returns the highest ID among all closed trades, or 0 if none exist.
+ */
+export function getMaxClosedTradeId(): number {
+  const row = db.prepare(
+    "SELECT MAX(id) as maxId FROM trades WHERE status != 'open'",
+  ).get() as { maxId: number | null };
+  return row.maxId ?? 0;
 }

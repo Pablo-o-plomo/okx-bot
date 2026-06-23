@@ -81,6 +81,7 @@ export interface Trade {
   indicatorsAtEntry?: IndicatorSnapshot;
   openedAt?: string;
   closedAt?: string;
+  slAlgoId?: string;   // OKX algo order ID for the active SL conditional order
 }
 
 // ─── Indicator Snapshot ───────────────────────────────────────────────────────
@@ -88,7 +89,7 @@ export interface IndicatorSnapshot {
   price: number;
   ema20: number;
   ema50: number;
-  ema200: number;
+  ema200: number | null;
   rsi: number;
   macdLine: number;
   macdSignal: number;

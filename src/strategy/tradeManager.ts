@@ -1,8 +1,8 @@
-import { getOpenTrades, closeTrade, getTradeById, updateTradeExcursion, updateTradeStopLoss, updateTradeTpHit } from '../database/db';
-import { getTicker } from '../okx/market';
-import { closePosition, moveStopLossToBreakeven, updatePaperBalance } from '../okx/trading';
+import { getOpenTrades, closeTrade, getTradeById, updateTradeExcursion, updateTradeStopLoss, updateTradeTpHit, updateTradeSlAlgoId } from '../database/db';
+import { getTicker, getInstrumentInfo } from '../okx/market';
+import { closePosition, moveStopLossToBreakeven, cancelAlgoOrder, updatePaperBalance } from '../okx/trading';
 import { recordTradeResult } from './riskManager';
-import { broadcastTpHit, broadcastTradeClosed } from '../telegram/bot';
+import { broadcastTpHit, broadcastTradeClosed, sendErrorAlert } from '../telegram/bot';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 import type { Trade, ErrorTag, TradeStatus } from '../database/models';
@@ -78,8 +78,9 @@ async function checkTrade(trade: Trade): Promise<void> {
     hitTPs.add(1);
     updateTradeTpHit(id, 1);
     trade.tp1Hit = true;
+    await moveStopToBreakeven(trade);
     await broadcastTpHit(trade, 1, currentPrice);
-    logger.info(`📈 TP1 hit for ${trade.symbol}`);
+    logger.info(`📈 TP1 hit for ${trade.symbol} — SL moved to breakeven`);
   }
 }
 
@@ -106,15 +107,35 @@ async function moveStopToBreakeven(trade: Trade): Promise<void> {
   updateTradeStopLoss(trade.id, breakevenStopLoss);
   trade.stopLoss = breakevenStopLoss;
 
+  // Cancel existing SL algo order before placing a new one to avoid duplicates
+  if (trade.slAlgoId) {
+    try {
+      await cancelAlgoOrder(trade.symbol, trade.slAlgoId);
+      logger.info(`🗑️ Cancelled old SL algo order ${trade.slAlgoId} for ${trade.symbol}`);
+    } catch (err: any) {
+      logger.warn(`⚠️ Failed to cancel old SL algo ${trade.slAlgoId} for ${trade.symbol}: ${err.message}`);
+      sendErrorAlert(err.message, `Cancel SL algo: ${trade.symbol}`).catch(() => {});
+      // Don't abort — proceed to place the new algo order regardless
+    }
+  }
+
   try {
-    await moveStopLossToBreakeven(
+    const result = await moveStopLossToBreakeven(
       trade.symbol,
       trade.direction,
       trade.positionSize,
       breakevenStopLoss,
     );
+
+    // Save algo ID only for live orders (paper returns a fake orderId)
+    if (!result.paper && trade.id) {
+      updateTradeSlAlgoId(trade.id, result.orderId);
+      trade.slAlgoId = result.orderId;
+      logger.info(`💾 SL algo order saved: ${result.orderId} for ${trade.symbol}`);
+    }
   } catch (err: any) {
     logger.error(`Failed to move SL to breakeven for ${trade.symbol}: ${err.message}`);
+    sendErrorAlert(err.message, `SL to breakeven: ${trade.symbol}`).catch(() => {});
   }
 }
 
@@ -130,21 +151,44 @@ async function handleClose(
   const isWin = status !== 'closed_sl';
   const result = isBreakeven ? 'breakeven' : isWin ? 'win' : 'loss';
 
-  const pnlPercent = isLong
-    ? ((exitPrice - trade.entryPrice) / trade.entryPrice) * 100 * trade.leverage
-    : ((trade.entryPrice - exitPrice) / trade.entryPrice) * 100 * trade.leverage;
+  // priceDiff: positive = profit for the given direction
+  const priceDiff = isLong
+    ? exitPrice - trade.entryPrice
+    : trade.entryPrice - exitPrice;
 
-  const pnlUsdt = (pnlPercent / 100) * trade.positionSize * trade.entryPrice;
+  // pnlPercent: leverage-adjusted ROE (return on margin), unchanged from original
+  const pnlPercent = (priceDiff / trade.entryPrice) * 100 * trade.leverage;
+
+  // pnlUsdt: corrected to use actual OKX contract value for USDT-SWAP
+  let pnlUsdt: number;
+  if (trade.symbol.endsWith('-SWAP')) {
+    let ctVal = 1; // fallback: assume ctVal=1 if API unreachable
+    try {
+      const info = await getInstrumentInfo(trade.symbol);
+      ctVal = info?.ctVal ?? 1;
+    } catch {
+      logger.warn(`Could not fetch ctVal for ${trade.symbol}, pnlUsdt computed with ctVal=1`);
+    }
+    // contracts * ctVal * priceDiff  (e.g. BTC-USDT-SWAP: contracts * 0.01 BTC * Δprice)
+    pnlUsdt = trade.positionSize * ctVal * priceDiff;
+  } else {
+    // SPOT: positionSize is in base asset units → pnlUsdt = size * priceDiff
+    pnlUsdt = trade.positionSize * priceDiff;
+  }
 
   // ── Generate exit analysis ──
   const { exitReason, exitAnalysis, improvements, errorTags } =
     await generateExitAnalysis(trade, status, exitPrice, pnlPercent);
 
   // ── Close in paper/live ──
+  // Paper closePosition never throws; live throws on OKX rejection.
+  // On failure: leave DB/balance/stats untouched so the trade stays "open" and can be retried.
   try {
     await closePosition(trade.symbol, trade.direction, trade.positionSize, exitPrice);
   } catch (err: any) {
-    logger.error(`Failed to place close order: ${err.message}`);
+    logger.error(`Failed to place close order for ${trade.symbol} #${trade.id}: ${err.message}`);
+    sendErrorAlert(err.message, `Close position: ${trade.symbol} #${trade.id}`).catch(() => {});
+    return; // ← position remains open on exchange; do not update DB, balance, or stats
   }
 
   // ── Update DB ──

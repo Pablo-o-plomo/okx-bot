@@ -50,6 +50,10 @@ export function recordScannerRun(checkedSymbols: number, signalsFound: number, o
 export function initTelegramBot(): TelegramBot {
   bot = new TelegramBot(config.telegram.botToken, { polling: true });
 
+  if (ADMIN_IDS.length === 0) {
+    logger.warn('⚠️  TELEGRAM_ADMIN_ID not set — all admin commands are DISABLED. Set it in .env to enable /pause, /resume, /positions, /risk, etc.');
+  }
+
   registerCommands();
   logger.info('🤖 Telegram bot started');
 
@@ -62,7 +66,7 @@ export function getBot(): TelegramBot {
 }
 
 function isAdmin(chatId: string): boolean {
-  if (ADMIN_IDS.length === 0) return true; // No admin list = any user
+  if (ADMIN_IDS.length === 0) return false; // No admin configured = nobody is admin
   return ADMIN_IDS.includes(chatId);
 }
 

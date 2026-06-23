@@ -91,13 +91,17 @@ async function liveOrder(signal: Signal): Promise<OrderResult> {
 
   const result = await okxClient.privatePost<any[]>('/api/v5/trade/order', orderData);
 
+  if (result[0].sCode !== '0') {
+    throw new Error(`OKX order rejected: sCode=${result[0].sCode} msg=${result[0].sMsg}`);
+  }
+
   return {
     orderId: result[0].ordId,
     symbol: signal.symbol,
     side,
     price: signal.entryPrice,
     size: signal.positionSize,
-    status: result[0].sCode === '0' ? 'placed' : 'failed',
+    status: 'placed',
     paper: false,
   };
 }
@@ -129,13 +133,17 @@ export async function moveStopLossToBreakeven(
     reduceOnly: true,
   });
 
+  if (result[0].sCode !== '0') {
+    throw new Error(`OKX algo order rejected: sCode=${result[0].sCode} msg=${result[0].sMsg}`);
+  }
+
   return {
     orderId: result[0].algoId ?? result[0].ordId,
     symbol,
     side,
     price: stopLoss,
     size,
-    status: result[0].sCode === '0' ? 'updated' : 'failed',
+    status: 'updated',
     paper: false,
   };
 }
@@ -164,15 +172,39 @@ export async function closePosition(
     sz: String(size),
   });
 
+  if (result[0].sCode !== '0') {
+    throw new Error(`OKX close order rejected: sCode=${result[0].sCode} msg=${result[0].sMsg}`);
+  }
+
   return {
     orderId: result[0].ordId,
     symbol,
     side,
     price,
     size,
-    status: result[0].sCode === '0' ? 'placed' : 'failed',
+    status: 'placed',
     paper: false,
   };
+}
+
+/**
+ * Cancel an active SL algo order on OKX.
+ * No-op in paper/demo mode.
+ */
+export async function cancelAlgoOrder(symbol: string, algoId: string): Promise<void> {
+  if (!config.trading.isLive || !config.trading.autoTrade) return;
+
+  // OKX cancel-algos expects an array body; cast bypasses Record<string, unknown> constraint
+  const result = await okxClient.privatePost<any[]>(
+    '/api/v5/trade/cancel-algos',
+    [{ algoId, instId: symbol }] as unknown as Record<string, unknown>,
+  );
+
+  if (result[0]?.sCode !== '0') {
+    throw new Error(
+      `OKX cancel algo failed: algoId=${algoId} sCode=${result[0]?.sCode} msg=${result[0]?.sMsg}`,
+    );
+  }
 }
 
 async function fetchOkxUsdtBalance(): Promise<number> {

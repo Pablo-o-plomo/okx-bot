@@ -182,8 +182,16 @@ export function detectTrend(
   price: number,
   ema20: number,
   ema50: number,
-  ema200: number,
+  ema200: number | null,
 ): 'bullish' | 'bearish' | 'neutral' {
+  if (ema200 === null) {
+    // Not enough candles for EMA200 — use short-term EMAs only (conservative)
+    const pts = [price > ema50, price > ema20, ema20 > ema50].filter(Boolean).length;
+    if (pts === 3) return 'bullish';
+    if (pts === 0) return 'bearish';
+    return 'neutral';
+  }
+
   const bullishPoints = [
     price > ema200 ? 1 : 0,
     price > ema50 ? 1 : 0,
@@ -206,7 +214,7 @@ export function computeIndicators(candles: Candle[], timeframe: string): Indicat
 
   const e20 = lastEma(closes, 20);
   const e50 = lastEma(closes, 50);
-  const e200 = lastEma(closes, Math.min(200, closes.length - 1));
+  const e200 = closes.length >= 200 ? lastEma(closes, 200) : null;
   const rsiVal = rsi(closes, 14);
   const macdVal = macd(closes);
   const atrVal = atr(candles, 14);

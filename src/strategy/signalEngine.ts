@@ -87,9 +87,9 @@ function evaluateSignal(
   if (direction === 'LONG') {
     // ── Trend factors ──
     factors.push({
-      met: primary.price > primary.ema200,
+      met: primary.ema200 !== null && primary.price > primary.ema200,
       weight: 2,
-      description: 'Цена выше EMA 200',
+      description: primary.ema200 !== null ? 'Цена выше EMA 200' : 'EMA 200 недоступна (мало свечей)',
     });
     factors.push({
       met: primary.ema20 > primary.ema50,
@@ -150,9 +150,9 @@ function evaluateSignal(
   } else {
     // ── SHORT factors ──
     factors.push({
-      met: primary.price < primary.ema200,
+      met: primary.ema200 !== null && primary.price < primary.ema200,
       weight: 2,
-      description: 'Цена ниже EMA 200',
+      description: primary.ema200 !== null ? 'Цена ниже EMA 200' : 'EMA 200 недоступна (мало свечей)',
     });
     factors.push({
       met: primary.ema20 < primary.ema50,

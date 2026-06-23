@@ -1,6 +1,7 @@
 import { config } from '../config';
 import { getBotState, updateBotState, getOpenTrades, getOpenTradeBySymbol, getTodayClosedTrades } from '../database/db';
 import { getTradingBalance } from '../utils/balance';
+import { getInstrumentInfo } from '../okx/market';
 import { logger } from '../utils/logger';
 import type { Signal, Trade } from '../database/models';
 
@@ -232,25 +233,69 @@ export async function checkRisk(signal: Signal): Promise<RiskCheck> {
 }
 
 /**
+ * Floor a value to the nearest multiple of lotSz (round down, never up).
+ */
+function floorToLotSz(value: number, lotSz: number): number {
+  if (lotSz <= 0) return value;
+  const decimals = (lotSz.toString().split('.')[1] ?? '').length;
+  return parseFloat((Math.floor(value / lotSz) * lotSz).toFixed(decimals));
+}
+
+/**
  * Calculate position size based on account balance and risk %.
+ *
+ * For USDT-SWAP: returns number of contracts
+ *   contracts = riskUsdt / (|entry - stopLoss| * ctVal)
+ *   floored to lotSz, clamped to minSz.
+ *
+ * For SPOT: returns base asset quantity
+ *   size = riskUsdt / |entry - stopLoss|
  */
 export async function calculatePositionSize(signal: Signal): Promise<number> {
   const balance = await getTradingBalance();
-  const riskAmount = balance * (config.trading.riskPerTrade / 100);
+  const riskUsdt = balance * (config.trading.riskPerTrade / 100);
   const slDistance = Math.abs(signal.entryPrice - signal.stopLoss);
 
   if (slDistance === 0) return 0;
 
-  // For SWAP: size in contracts. For SPOT: size in quote currency
   const isSwap = signal.symbol.endsWith('-SWAP');
+
   if (isSwap) {
-    // Contract value assumed 1 USD (most OKX USDT perps)
-    const size = (riskAmount / slDistance) / signal.leverage;
-    return parseFloat(Math.max(size, 0.01).toFixed(2));
-  } else {
-    const size = riskAmount / slDistance;
-    return parseFloat(Math.max(size, 0.001).toFixed(6));
+    // Fetch real contract spec from OKX
+    const info = await getInstrumentInfo(signal.symbol);
+    const ctVal = info?.ctVal ?? 1;      // USDT value of 1 base unit per contract
+    const minSz = info?.minSz ?? 1;      // minimum order size in contracts
+    const lotSz = info?.lotSz ?? 1;      // order size increment in contracts
+
+    // Loss in USDT if SL is hit, per 1 contract
+    const lossPerContractUsdt = slDistance * ctVal;
+    if (lossPerContractUsdt === 0) return 0;
+
+    const rawContracts = riskUsdt / lossPerContractUsdt;
+    const contracts = floorToLotSz(rawContracts, lotSz);
+
+    // If floored size is below exchange minimum — reject the trade to avoid exceeding risk
+    if (contracts < minSz) {
+      logger.warn(
+        `⚠️ Position sizing [${signal.symbol}]: contracts=${contracts} < minSz=${minSz} — skipping. ` +
+        `riskUsdt=${riskUsdt.toFixed(2)} rawContracts=${rawContracts.toFixed(4)} lotSz=${lotSz}`,
+      );
+      return 0;
+    }
+
+    const notionalUsdt = contracts * ctVal * signal.entryPrice;
+    logger.info(
+      `📐 Position sizing [${signal.symbol}]: ctVal=${ctVal} minSz=${minSz} lotSz=${lotSz} | ` +
+      `riskUsdt=${riskUsdt.toFixed(2)} lossPerContract=${lossPerContractUsdt.toFixed(4)} | ` +
+      `contracts=${contracts} notional≈${notionalUsdt.toFixed(2)} USDT`,
+    );
+
+    return contracts;
   }
+
+  // SPOT: size in base asset units
+  const size = riskUsdt / slDistance;
+  return parseFloat(Math.max(size, 0.001).toFixed(6));
 }
 
 /**
