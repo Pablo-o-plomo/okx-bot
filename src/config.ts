@@ -11,41 +11,51 @@ function optionalEnv(key: string, fallback: string): string {
   return process.env[key] || fallback;
 }
 
-function qualityModeEnv(): 'low' | 'normal' | 'high' {
-  const value = optionalEnv('QUALITY_MODE', 'high').toLowerCase();
-  return value === 'low' || value === 'normal' || value === 'high' ? value : 'high';
+function optionalBool(keys: string[], fallback: boolean): boolean {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value !== undefined && value !== '') {
+      return value.toLowerCase() === 'true';
+    }
+  }
+  return fallback;
 }
 
-const okxApiKey = optionalEnv('OKX_API_KEY', '');
-const okxApiSecret = optionalEnv('OKX_API_SECRET', '');
-const okxPassphrase = optionalEnv('OKX_API_PASSPHRASE', '');
-const okxKeysPresent = Boolean(okxApiKey && okxApiSecret && okxPassphrase);
+const legacyLiveTrading = optionalBool(['LIVE_TRADING'], false);
+const tradingMode = optionalEnv('TRADING_MODE', legacyLiveTrading ? 'live' : 'paper').toLowerCase();
+
+if (!['paper', 'live'].includes(tradingMode)) {
+  throw new Error('❌ TRADING_MODE must be either paper or live');
+}
 
 export const config = {
   telegram: {
     botToken: requireEnv('TELEGRAM_BOT_TOKEN'),
     chatId: requireEnv('TELEGRAM_CHAT_ID'),
     adminId: optionalEnv('TELEGRAM_ADMIN_ID', ''),
-    sendStartupToChannel: optionalEnv('SEND_STARTUP_TO_CHANNEL', 'false') === 'true',
   },
 
   okx: {
-    apiKey: okxApiKey,
-    apiSecret: okxApiSecret,
-    passphrase: okxPassphrase,
+    apiKey: optionalEnv('OKX_API_KEY', ''),
+    apiSecret: optionalEnv('OKX_API_SECRET', ''),
+    passphrase: optionalEnv('OKX_API_PASSPHRASE', ''),
     baseUrl: 'https://www.okx.com',
-    isDemo: optionalEnv('DEMO_TRADING', 'true') === 'true',
+    isDemo: optionalBool(['OKX_DEMO'], false) || optionalBool(['OKX_SIMULATED'], false),
   },
 
   trading: {
-    isLive: optionalEnv('LIVE_TRADING', 'false') === 'true' && okxKeysPresent,
+    mode: tradingMode as 'paper' | 'live',
+    isLive: tradingMode === 'live',
+    autoTrade: optionalBool(['AUTO_TRADE'], false),
+    riskGuardEnabled: optionalBool(['RISK_GUARD_ENABLED'], true),
+    autoPauseOnLimit: optionalBool(['AUTO_PAUSE_ON_LIMIT'], false),
+    paperStartBalance: parseFloat(optionalEnv('PAPER_START_BALANCE', '1000')),
     symbols: optionalEnv(
       'SYMBOLS',
       'BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP'
     )
       .split(',')
-      .map(s => s.trim())
-      .filter(s => s.length > 0),
+      .map(s => s.trim()),
 
     timeframes: optionalEnv('TIMEFRAMES', '15m,1H,4H')
       .split(',')
@@ -54,17 +64,11 @@ export const config = {
     riskPerTrade: parseFloat(optionalEnv('RISK_PER_TRADE', '1')),
     maxDailyLoss: parseFloat(optionalEnv('MAX_DAILY_LOSS', '3')),
     maxOpenPositions: parseInt(optionalEnv('MAX_OPEN_POSITIONS', '3')),
-    maxLossesInRow: parseInt(optionalEnv('MAX_LOSSES_IN_ROW', '3')),
+    maxLossesInRow: parseInt(optionalEnv('MAX_LOSS_STREAK', optionalEnv('MAX_LOSSES_IN_ROW', '3'))),
     minSignalConfidence: parseInt(
-      optionalEnv('MIN_SIGNAL_CONFIDENCE', '7')
+      optionalEnv('MIN_SIGNAL_CONFIDENCE', '6')
     ),
     autoOptimize: optionalEnv('AUTO_OPTIMIZE', 'false') === 'true',
-    minAtrPercent: parseFloat(optionalEnv('MIN_ATR_PERCENT', '0.2')),
-    maxAtrPercent: parseFloat(optionalEnv('MAX_ATR_PERCENT', '3')),
-    defensiveModeDrawdown: parseFloat(optionalEnv('DEFENSIVE_MODE_DRAWDOWN', '5')),
-    minVolumeMultiplier: parseFloat(optionalEnv('MIN_VOLUME_MULTIPLIER', '1.2')),
-    qualityMode: qualityModeEnv(),
-
   },
 
   database: {
