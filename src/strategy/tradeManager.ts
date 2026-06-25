@@ -1,6 +1,6 @@
-import { getOpenTrades, closeTrade, getTradeById, updateTradeExcursion, updateTradeStopLoss, updateTradeTpHit, updateTradeSlAlgoId } from '../database/db';
-import { getTicker, getInstrumentInfo } from '../okx/market';
-import { closePosition, moveStopLossToBreakeven, cancelAlgoOrder, updatePaperBalance } from '../okx/trading';
+import { getOpenTrades, closeTrade, getTradeById, updateTradeExcursion, updateTradeStopLoss, updateTradeTpHit, updateTradeSlAlgoId, updateTradePartialClose } from '../database/db';
+import { getTicker, getInstrumentInfo, getInstrumentTradeParams } from '../okx/market';
+import { closePosition, closePartialPosition, moveStopLossToBreakeven, cancelAlgoOrder, updatePaperBalance } from '../okx/trading';
 import { recordTradeResult } from './riskManager';
 import { broadcastTpHit, broadcastTradeClosed, sendErrorAlert } from '../telegram/bot';
 import { logger } from '../utils/logger';
@@ -11,6 +11,12 @@ import { getCandles } from '../okx/market';
 
 // Track which TPs have been hit per trade (in memory)
 const tpHitMap = new Map<number, Set<number>>();
+
+// Rounds size DOWN to the nearest lotSz increment.
+function roundDownToLot(size: number, lotSz: number): number {
+  if (lotSz <= 0) return 0;
+  return Math.floor(size / lotSz) * lotSz;
+}
 
 /**
  * Monitor all open trades against current prices.
@@ -37,7 +43,7 @@ async function checkTrade(trade: Trade): Promise<void> {
   const isLong = trade.direction === 'LONG';
   updateTradeLifeMetrics(trade, currentPrice);
 
-  // ── Check Stop Loss ──
+  // -- Check Stop Loss --
   const slHit = isLong
     ? currentPrice <= trade.stopLoss
     : currentPrice >= trade.stopLoss;
@@ -47,7 +53,7 @@ async function checkTrade(trade: Trade): Promise<void> {
     return;
   }
 
-  // ── Check Take Profits ──
+  // -- Check Take Profits --
   const tp3Hit = isLong ? currentPrice >= trade.takeProfit3 : currentPrice <= trade.takeProfit3;
   const tp2Hit = isLong ? currentPrice >= trade.takeProfit2 : currentPrice <= trade.takeProfit2;
   const tp1Hit = isLong ? currentPrice >= trade.takeProfit1 : currentPrice <= trade.takeProfit1;
@@ -68,19 +74,22 @@ async function checkTrade(trade: Trade): Promise<void> {
     updateTradeTpHit(id, 2);
     trade.tp1Hit = true;
     trade.tp2Hit = true;
-    await moveStopToBreakeven(trade);
+    await handlePartialClose(trade, 2, currentPrice);
+    await moveStopToLevel(trade, trade.takeProfit1);
     await broadcastTpHit(trade, 2, currentPrice, true);
-    logger.info(`📈 TP2 hit for ${trade.symbol} — SL moved to breakeven`);
+    logger.info(`[TP2] ${trade.symbol} partial close + SL moved to TP1`);
     return;
   }
 
-  if (tp1Hit && !hitTPs.has(1)) {
+  // Guard !trade.tp1ClosedSize prevents re-executing partial close after bot restart
+  if (tp1Hit && !hitTPs.has(1) && !trade.tp1ClosedSize) {
     hitTPs.add(1);
     updateTradeTpHit(id, 1);
     trade.tp1Hit = true;
+    await handlePartialClose(trade, 1, currentPrice);
     await moveStopToBreakeven(trade);
-    await broadcastTpHit(trade, 1, currentPrice);
-    logger.info(`📈 TP1 hit for ${trade.symbol} — SL moved to breakeven`);
+    await broadcastTpHit(trade, 1, currentPrice, true);
+    logger.info(`[TP1] ${trade.symbol} partial close + SL moved to breakeven`);
   }
 }
 
@@ -100,22 +109,94 @@ function updateTradeLifeMetrics(trade: Trade, currentPrice: number): void {
   );
 }
 
-async function moveStopToBreakeven(trade: Trade): Promise<void> {
+// Partially close ~33% of the initial position at TP1 or TP2.
+// Respects lotSz / minSz. On exchange failure: logs and returns without updating DB.
+// Paper balance is credited immediately; handleClose credits only the remainder.
+async function handlePartialClose(
+  trade: Trade,
+  tpLevel: 1 | 2,
+  currentPrice: number,
+): Promise<void> {
   if (!trade.id) return;
 
-  const breakevenStopLoss = trade.entryPrice;
-  updateTradeStopLoss(trade.id, breakevenStopLoss);
-  trade.stopLoss = breakevenStopLoss;
+  // Instrument sizing (fallback: ctVal=1, lotSz=1, minSz=1 -- never throws)
+  const { ctVal, lotSz, minSz } = await getInstrumentTradeParams(trade.symbol);
 
-  // Cancel existing SL algo order before placing a new one to avoid duplicates
+  // Target 33% of the original full position size
+  const targetCloseSize = trade.positionSize * 0.33;
+  const closeSize = roundDownToLot(targetCloseSize, lotSz);
+  const currentRemaining = trade.remainingSize ?? trade.positionSize;
+
+  if (closeSize <= 0 || closeSize < minSz) {
+    logger.warn(
+      `Partial close skipped for ${trade.symbol} TP${tpLevel}: closeSize=${closeSize} < minSz=${minSz}`,
+    );
+    return; // caller still proceeds to SL move
+  }
+
+  // Safety guard: never close more than what remains
+  const actualCloseSize = Math.min(closeSize, currentRemaining);
+
+  try {
+    await closePartialPosition(trade.symbol, trade.direction, actualCloseSize, currentPrice);
+  } catch (err: any) {
+    logger.error(`Partial close failed for ${trade.symbol} TP${tpLevel}: ${err.message}`);
+    sendErrorAlert(err.message, `Partial close TP${tpLevel}: ${trade.symbol}`).catch(() => {});
+    return; // do not update DB or balance -- position unchanged on exchange
+  }
+
+  // Realized PnL for the closed portion only
+  const priceDiff = trade.direction === 'LONG'
+    ? currentPrice - trade.entryPrice
+    : trade.entryPrice - currentPrice;
+  const partialPnlUsdt = actualCloseSize * ctVal * priceDiff;
+  const newRemainingSize = parseFloat((currentRemaining - actualCloseSize).toFixed(8));
+
+  // Persist to DB
+  updateTradePartialClose(trade.id, tpLevel, actualCloseSize, partialPnlUsdt, newRemainingSize);
+
+  // Update in-memory trade object (used by subsequent SL move and handleClose)
+  if (tpLevel === 1) {
+    trade.tp1ClosedSize = actualCloseSize;
+    trade.tp1PnlUsdt = partialPnlUsdt;
+  } else {
+    trade.tp2ClosedSize = actualCloseSize;
+    trade.tp2PnlUsdt = partialPnlUsdt;
+  }
+  trade.remainingSize = newRemainingSize;
+
+  // Paper balance: credit the partial PnL now (final close credits only the remainder)
+  if (!config.trading.isLive) {
+    updatePaperBalance(partialPnlUsdt);
+  }
+
+  logger.info(
+    `TP${tpLevel} partial close: ${trade.symbol} ` +
+    `closed=${actualCloseSize} pnl=${partialPnlUsdt.toFixed(2)} USDT ` +
+    `remaining=${newRemainingSize}`,
+  );
+}
+
+// Move SL to an arbitrary price level.
+// Uses trade.remainingSize for the algo order size (correct after partial closes).
+// Cancels the previous SL algo before placing the new one.
+async function moveStopToLevel(trade: Trade, newStopLoss: number): Promise<void> {
+  if (!trade.id) return;
+
+  updateTradeStopLoss(trade.id, newStopLoss);
+  trade.stopLoss = newStopLoss;
+
+  // After partial closes the algo order must cover only remaining contracts
+  const orderSize = trade.remainingSize ?? trade.positionSize;
+
   if (trade.slAlgoId) {
     try {
       await cancelAlgoOrder(trade.symbol, trade.slAlgoId);
-      logger.info(`🗑️ Cancelled old SL algo order ${trade.slAlgoId} for ${trade.symbol}`);
+      logger.info(`Cancelled old SL algo order ${trade.slAlgoId} for ${trade.symbol}`);
     } catch (err: any) {
-      logger.warn(`⚠️ Failed to cancel old SL algo ${trade.slAlgoId} for ${trade.symbol}: ${err.message}`);
+      logger.warn(`Failed to cancel old SL algo ${trade.slAlgoId} for ${trade.symbol}: ${err.message}`);
       sendErrorAlert(err.message, `Cancel SL algo: ${trade.symbol}`).catch(() => {});
-      // Don't abort — proceed to place the new algo order regardless
+      // Don't abort -- proceed to place the new algo order regardless
     }
   }
 
@@ -123,20 +204,24 @@ async function moveStopToBreakeven(trade: Trade): Promise<void> {
     const result = await moveStopLossToBreakeven(
       trade.symbol,
       trade.direction,
-      trade.positionSize,
-      breakevenStopLoss,
+      orderSize,
+      newStopLoss,
     );
 
-    // Save algo ID only for live orders (paper returns a fake orderId)
     if (!result.paper && trade.id) {
       updateTradeSlAlgoId(trade.id, result.orderId);
       trade.slAlgoId = result.orderId;
-      logger.info(`💾 SL algo order saved: ${result.orderId} for ${trade.symbol}`);
+      logger.info(`SL algo order saved: ${result.orderId} for ${trade.symbol}`);
     }
   } catch (err: any) {
-    logger.error(`Failed to move SL to breakeven for ${trade.symbol}: ${err.message}`);
-    sendErrorAlert(err.message, `SL to breakeven: ${trade.symbol}`).catch(() => {});
+    logger.error(`Failed to move SL to ${newStopLoss} for ${trade.symbol}: ${err.message}`);
+    sendErrorAlert(err.message, `Move SL to ${newStopLoss}: ${trade.symbol}`).catch(() => {});
   }
+}
+
+// Convenience: move SL to entry price (breakeven).
+async function moveStopToBreakeven(trade: Trade): Promise<void> {
+  await moveStopToLevel(trade, trade.entryPrice);
 }
 
 async function handleClose(
@@ -151,76 +236,86 @@ async function handleClose(
   const isWin = status !== 'closed_sl';
   const result = isBreakeven ? 'breakeven' : isWin ? 'win' : 'loss';
 
+  // Size remaining after any partial closes at TP1/TP2
+  const closeSize = trade.remainingSize ?? trade.positionSize;
+
   // priceDiff: positive = profit for the given direction
   const priceDiff = isLong
     ? exitPrice - trade.entryPrice
     : trade.entryPrice - exitPrice;
 
-  // pnlPercent: leverage-adjusted ROE (return on margin), unchanged from original
+  // pnlPercent: leverage-adjusted ROE on full initial margin (unchanged semantics)
   const pnlPercent = (priceDiff / trade.entryPrice) * 100 * trade.leverage;
 
-  // pnlUsdt: corrected to use actual OKX contract value for USDT-SWAP
-  let pnlUsdt: number;
+  // finalPnlUsdt: PnL on the REMAINING portion only (partial close PnLs already applied)
+  let finalPnlUsdt: number;
   if (trade.symbol.endsWith('-SWAP')) {
-    let ctVal = 1; // fallback: assume ctVal=1 if API unreachable
+    let ctVal = 1;
     try {
       const info = await getInstrumentInfo(trade.symbol);
       ctVal = info?.ctVal ?? 1;
     } catch {
       logger.warn(`Could not fetch ctVal for ${trade.symbol}, pnlUsdt computed with ctVal=1`);
     }
-    // contracts * ctVal * priceDiff  (e.g. BTC-USDT-SWAP: contracts * 0.01 BTC * Δprice)
-    pnlUsdt = trade.positionSize * ctVal * priceDiff;
+    finalPnlUsdt = closeSize * ctVal * priceDiff;
   } else {
-    // SPOT: positionSize is in base asset units → pnlUsdt = size * priceDiff
-    pnlUsdt = trade.positionSize * priceDiff;
+    finalPnlUsdt = closeSize * priceDiff;
   }
 
-  // ── Generate exit analysis ──
+  // Total realized PnL = TP1 partial + TP2 partial + final remaining portion
+  const totalPnlUsdt =
+    (trade.tp1PnlUsdt ?? 0) + (trade.tp2PnlUsdt ?? 0) + finalPnlUsdt;
+
+  // -- Generate exit analysis --
   const { exitReason, exitAnalysis, improvements, errorTags } =
     await generateExitAnalysis(trade, status, exitPrice, pnlPercent);
 
-  // ── Close in paper/live ──
+  // -- Close in paper/live --
+  // Closes only the remaining contracts; partial closes already happened at TP1/TP2.
   // Paper closePosition never throws; live throws on OKX rejection.
-  // On failure: leave DB/balance/stats untouched so the trade stays "open" and can be retried.
   try {
-    await closePosition(trade.symbol, trade.direction, trade.positionSize, exitPrice);
+    await closePosition(trade.symbol, trade.direction, closeSize, exitPrice);
   } catch (err: any) {
     logger.error(`Failed to place close order for ${trade.symbol} #${trade.id}: ${err.message}`);
     sendErrorAlert(err.message, `Close position: ${trade.symbol} #${trade.id}`).catch(() => {});
-    return; // ← position remains open on exchange; do not update DB, balance, or stats
+    return; // position remains open; do not update DB, balance, or stats
   }
 
-  // ── Update DB ──
+  // -- Update DB --
+  // totalPnlUsdt (stored in pnl_usdt column) includes all partial close PnLs
   closeTrade(
     trade.id,
     exitPrice,
     status,
     result,
     parseFloat(pnlPercent.toFixed(4)),
-    parseFloat(pnlUsdt.toFixed(4)),
+    parseFloat(totalPnlUsdt.toFixed(4)),
     exitReason,
     exitAnalysis,
     improvements,
     errorTags,
   );
 
-  // ── Update paper balance ──
+  // -- Update paper balance with FINAL portion only --
+  // TP1 and TP2 partial PnLs were already applied in handlePartialClose.
   if (!config.trading.isLive) {
-    updatePaperBalance(pnlUsdt);
+    updatePaperBalance(finalPnlUsdt);
   }
 
-  // ── Update risk counters ──
+  // -- Update risk counters --
   recordTradeResult(pnlPercent);
 
-  // ── Send Telegram notification ──
+  // -- Send Telegram notification --
   const updatedTrade = getTradeById(trade.id);
   if (updatedTrade) {
     await broadcastTradeClosed(updatedTrade, improvements);
   }
 
   tpHitMap.delete(trade.id);
-  logger.info(`Trade ${trade.id} closed: ${status} | PnL: ${pnlPercent.toFixed(2)}%`);
+  logger.info(
+    `Trade ${trade.id} closed: ${status} | PnL: ${pnlPercent.toFixed(2)}% | ` +
+    `Total USDT: ${totalPnlUsdt.toFixed(2)} (final: ${finalPnlUsdt.toFixed(2)})`,
+  );
 }
 
 async function generateExitAnalysis(
@@ -278,7 +373,8 @@ async function generateExitAnalysis(
       const entryIndicators = trade.indicatorsAtEntry;
       if (entryIndicators) {
         const slDistance = Math.abs(trade.entryPrice - trade.stopLoss) / trade.entryPrice;
-        if (slDistance < 0.005) {
+        // Skip stop_too_tight check if TP1 was hit and SL was already moved to breakeven
+        if (!trade.tp1Hit && slDistance < 0.005) {
           improvements.push('Стоп был слишком близко — расширить ATR-множитель');
           errorTags.push('stop_too_tight');
         }

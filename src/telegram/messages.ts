@@ -239,7 +239,6 @@ Status: <b>${signalStatus(signal.status)}</b>
 // ─── TP UPDATE ────────────────────────────────────────────────────────────────
 export function formatTpUpdateMessage(trade: Trade, tpLevel: number, currentPrice: number, stopMovedToBreakeven = false): string {
   const pnlPercent = tradePnlPercent(trade, currentPrice);
-  const pnlUsdt = (pnlPercent / 100) * trade.positionSize * trade.entryPrice;
 
   return `
 🎯 <b>TP${tpLevel} HIT</b>
@@ -247,7 +246,6 @@ export function formatTpUpdateMessage(trade: Trade, tpLevel: number, currentPric
 ${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
 
 <b>${signed(pnlPercent, 1)}%</b>
-<b>${signed(pnlUsdt, 1)} USDT</b>
 
 Position still active${stopMovedToBreakeven ? '\nSL moved to breakeven' : ''}
 `.trim();
@@ -256,7 +254,8 @@ Position still active${stopMovedToBreakeven ? '\nSL moved to breakeven' : ''}
 // ─── TRADE CLOSED ─────────────────────────────────────────────────────────────
 export function formatTradeClosedMessage(trade: Trade, improvements?: string[]): string {
   const isWin = trade.result === 'win';
-  const icon = isWin ? '✅' : '❌';
+  const isBreakeven = trade.result === 'breakeven';
+  const icon = isWin ? '✅' : isBreakeven ? '⚖️' : '❌';
   const reasons = unique([
     ...(trade.errorTags ?? []).filter(tag => tag !== 'correct_execution').map(tag => tag.replace(/_/g, ' ')),
     ...(trade.exitReason ?? '').split('\n'),
@@ -271,7 +270,7 @@ ${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
 PNL: <b>${signed(trade.pnlPercent)}%</b>
 <b>${signed(trade.pnlUsdt)} USDT</b>
 ${reasons.length > 0 ? `\nReason:\n${reasons.join('\n')}` : ''}
-${!isWin && aiFix ? `\nAI fix:\n${aiFix}` : ''}
+${!isWin && !isBreakeven && aiFix ? `\nAI fix:\n${aiFix}` : ''}
 `.trim();
 }
 
@@ -286,6 +285,7 @@ export function formatDailyReport(
   const closed = trades.filter(t => t.status !== 'open');
   const wins = closed.filter(t => t.result === 'win');
   const losses = closed.filter(t => t.result === 'loss');
+  const breakevens = closed.filter(t => t.result === 'breakeven');
   const totalTradePnlPercent = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0);
   const averageTradePercent = closed.length > 0 ? totalTradePnlPercent / closed.length : 0;
   const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
@@ -321,8 +321,8 @@ Result:
 Trades:
 <b>${closed.length}</b>
 
-Wins / Losses:
-<b>${wins.length} / ${losses.length}</b>
+Wins / Losses / BE:
+<b>${wins.length} / ${losses.length} / ${breakevens.length}</b>
 
 Winrate:
 <b>${winRate.toFixed(1)}%</b>

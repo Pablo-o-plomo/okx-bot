@@ -166,6 +166,12 @@ function migrateTables(): void {
   addColumnIfMissing('bot_state', 'paper_start_balance', 'REAL');
   addColumnIfMissing('bot_state', 'last_analyzed_trade_id', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('trades', 'sl_algo_id', 'TEXT');
+  // Partial close tracking
+  addColumnIfMissing('trades', 'remaining_size', 'REAL');
+  addColumnIfMissing('trades', 'tp1_closed_size', 'REAL');
+  addColumnIfMissing('trades', 'tp1_pnl_usdt', 'REAL');
+  addColumnIfMissing('trades', 'tp2_closed_size', 'REAL');
+  addColumnIfMissing('trades', 'tp2_pnl_usdt', 'REAL');
   addColumnIfMissing('trades', 'tp1_hit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('trades', 'tp2_hit', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('trades', 'tp3_hit', 'INTEGER NOT NULL DEFAULT 0');
@@ -399,11 +405,34 @@ function rowToTrade(row: any): Trade {
     openedAt: row.opened_at,
     closedAt: row.closed_at ?? undefined,
     slAlgoId: row.sl_algo_id ?? undefined,
+    remainingSize: row.remaining_size ?? undefined,
+    tp1ClosedSize: row.tp1_closed_size ?? undefined,
+    tp1PnlUsdt: row.tp1_pnl_usdt ?? undefined,
+    tp2ClosedSize: row.tp2_closed_size ?? undefined,
+    tp2PnlUsdt: row.tp2_pnl_usdt ?? undefined,
   };
 }
 
 export function updateTradeSlAlgoId(tradeId: number, algoId: string | null): void {
   db.prepare('UPDATE trades SET sl_algo_id = ? WHERE id = ?').run(algoId, tradeId);
+}
+
+// Records a partial close at TP1 or TP2.
+// Not yet wired to trading logic - prepared for Stage 4 (handlePartialClose).
+export function updateTradePartialClose(
+  tradeId: number,
+  tpLevel: 1 | 2,
+  closedSize: number,
+  pnlUsdt: number,
+  remainingSize: number,
+): void {
+  const sizeCol  = `tp${tpLevel}_closed_size`;
+  const pnlCol   = `tp${tpLevel}_pnl_usdt`;
+  db.prepare(`
+    UPDATE trades
+    SET ${sizeCol} = ?, ${pnlCol} = ?, remaining_size = ?
+    WHERE id = ?
+  `).run(closedSize, pnlUsdt, remainingSize, tradeId);
 }
 
 // ─── Analysis Reports ─────────────────────────────────────────────────────────
@@ -484,7 +513,7 @@ export function updateBotState(partial: Partial<BotState>): void {
 
 /**
  * Returns the max trade ID that was current when the last learning analysis ran.
- * Zero if analysis has never run (new bot or first start).
+ * Zero if analysis has never run (new bot or first start).
  */
 export function getLastAnalyzedTradeId(): number {
   const row = db.prepare('SELECT last_analyzed_trade_id FROM bot_state WHERE id = 1').get() as

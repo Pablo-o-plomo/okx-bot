@@ -248,3 +248,71 @@ export function updatePaperBalance(pnlUsdt: number): void {
   const balance = getPaperTradingBalance();
   updateBotState({ totalBalance: balance + pnlUsdt });
 }
+
+/**
+ * Partially close an open position on OKX.
+ *
+ * Unlike closePosition(), this function:
+ *  - accepts any size <= current open contracts (caller's responsibility)
+ *  - sets reduceOnly: 'true' in live mode to prevent accidental position flip
+ *
+ * Not yet called from trading logic (Stage 4 will wire it to handlePartialClose).
+ */
+export async function closePartialPosition(
+  symbol: string,
+  direction: 'LONG' | 'SHORT',
+  size: number,
+  price: number,
+): Promise<OrderResult> {
+  // --- Validation ---
+  if (!symbol) throw new Error('closePartialPosition: symbol is empty');
+  if (direction !== 'LONG' && direction !== 'SHORT') {
+    throw new Error('closePartialPosition: invalid direction ' + direction);
+  }
+  if (size <= 0) throw new Error('closePartialPosition: size must be > 0, got ' + size);
+  if (price <= 0) throw new Error('closePartialPosition: price must be > 0, got ' + price);
+
+  // --- Paper mode ---
+  if (!config.trading.isLive || !config.trading.autoTrade) {
+    const orderId = 'PAPER-PARTIAL-' + (paperOrderCounter++);
+    logger.info('Paper partial close: ' + symbol + ' ' + direction + ' size=' + size + ' at ' + price);
+    return {
+      orderId,
+      symbol,
+      side: direction === 'LONG' ? 'sell' : 'buy',
+      price,
+      size,
+      status: 'filled',
+      paper: true,
+    };
+  }
+
+  // --- Live mode ---
+  const side = direction === 'LONG' ? 'sell' : 'buy';
+  logger.warn('LIVE PARTIAL CLOSE: ' + direction + ' ' + symbol + ' size=' + size + ' at ' + price);
+
+  const result = await okxClient.privatePost<any[]>('/api/v5/trade/order', {
+    instId: symbol,
+    tdMode: symbol.endsWith('-SWAP') ? 'cross' : 'cash',
+    side,
+    ordType: 'market',
+    sz: String(size),
+    reduceOnly: 'true',
+  });
+
+  if (result[0].sCode !== '0') {
+    throw new Error(
+      'OKX partial close rejected: sCode=' + result[0].sCode + ' msg=' + result[0].sMsg,
+    );
+  }
+
+  return {
+    orderId: result[0].ordId,
+    symbol,
+    side,
+    price,
+    size,
+    status: 'placed',
+    paper: false,
+  };
+}

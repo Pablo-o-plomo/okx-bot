@@ -1,0 +1,441 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.formatStatusMessage = formatStatusMessage;
+exports.formatSignalMessage = formatSignalMessage;
+exports.formatPositionsMessage = formatPositionsMessage;
+exports.formatSignalsListMessage = formatSignalsListMessage;
+exports.formatTpUpdateMessage = formatTpUpdateMessage;
+exports.formatTradeClosedMessage = formatTradeClosedMessage;
+exports.formatDailyReport = formatDailyReport;
+exports.formatLearningReport = formatLearningReport;
+exports.formatLearningDashboard = formatLearningDashboard;
+exports.formatLearningInProgressMessage = formatLearningInProgressMessage;
+exports.formatHeartbeatMessage = formatHeartbeatMessage;
+exports.formatErrorAlert = formatErrorAlert;
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+function compactSymbol(symbol) {
+    return escapeHtml(symbol.replace(/-USDT-SWAP$/, '').replace(/-USDT$/, ''));
+}
+function directionStyle(direction) {
+    return direction === 'LONG' ? '🟢🟢🟢 LONG' : '🔴🔴🔴 SHORT';
+}
+function formatDisplayBalance(balance) {
+    return balance === null ? 'unavailable' : `${balance.toFixed(2)} USDT`;
+}
+function statusModeLines(input) {
+    const lines = [
+        `OKX API: <b>${input.okxApiMode}</b>`,
+        `Trade mode: <b>${input.mode}</b>`,
+    ];
+    if (input.mode === 'LIVE') {
+        lines.push(`Auto trade: <b>${input.autoTrade ? 'ON' : 'OFF'}</b>`);
+    }
+    return lines.join('\n');
+}
+function statusBalanceLines(input) {
+    if (input.mode === 'PAPER') {
+        return [
+            `Paper balance: <b>${formatDisplayBalance(input.balance)}</b>`,
+            `OKX balance: <b>${formatDisplayBalance(input.okxBalance ?? null)}</b>`,
+        ].join('\n');
+    }
+    return `Balance: <b>${formatDisplayBalance(input.balance)}</b>`;
+}
+function signed(value, digits = 2) {
+    const num = value ?? 0;
+    return `${num >= 0 ? '+' : ''}${num.toFixed(digits)}`;
+}
+function signalStatus(status) {
+    switch (status) {
+        case 'pending':
+            return '🟡 WAITING ENTRY';
+        case 'active':
+            return '🟢 Signal active';
+        case 'cancelled':
+            return '⚫ Cancelled';
+        case 'expired':
+            return '⚪ Expired';
+        default:
+            return escapeHtml(status);
+    }
+}
+function priceDigits(symbol) {
+    const base = symbol.split('-')[0];
+    if (base === 'BTC')
+        return 0;
+    if (['ETH', 'SOL'].includes(base))
+        return 2;
+    if (['XRP', 'DOGE', 'TON'].includes(base))
+        return 4;
+    return 4;
+}
+function formatPrice(symbol, price) {
+    return escapeHtml(price.toFixed(priceDigits(symbol)).replace(/\.?0+$/, ''));
+}
+function tpStatus(hit) {
+    return hit ? '✅' : '⏳';
+}
+function isStopMovedToBreakeven(trade) {
+    return trade.stopLoss === trade.entryPrice || !!trade.tp2Hit;
+}
+function tradeTpHits(trade) {
+    const tp3 = !!trade.tp3Hit;
+    const tp2 = !!trade.tp2Hit || tp3 || isStopMovedToBreakeven(trade);
+    const tp1 = !!trade.tp1Hit || tp2;
+    return { tp1, tp2, tp3 };
+}
+function tpProgress(hits) {
+    return [hits.tp1, hits.tp2, hits.tp3].filter(Boolean).length;
+}
+function riskLabel(trade) {
+    const distance = Math.abs(trade.entryPrice - trade.stopLoss) / trade.entryPrice;
+    if (distance <= 0.01)
+        return 'LOW';
+    if (distance <= 0.03)
+        return 'MEDIUM';
+    return 'HIGH';
+}
+function unique(items) {
+    return Array.from(new Set(items.filter((item) => !!item && item.trim().length > 0)));
+}
+function cleanReason(reason) {
+    return escapeHtml(reason.replace(/^[-•\s]+/, '').replace(/_/g, ' ').trim());
+}
+function tradePnlPercent(trade, currentPrice) {
+    const raw = trade.direction === 'LONG'
+        ? ((currentPrice - trade.entryPrice) / trade.entryPrice) * 100
+        : ((trade.entryPrice - currentPrice) / trade.entryPrice) * 100;
+    return raw * trade.leverage;
+}
+// ─── BOT STATUS ───────────────────────────────────────────────────────────────
+function formatStatusMessage(input) {
+    const scannerState = input.isPaused ? 'OFF' : 'ON';
+    const lastScan = input.lastScan ?? '—';
+    if (input.isPaused) {
+        return `
+🔴 <b>BOT PAUSED</b>
+
+${statusModeLines(input)}
+Scanner: <b>${scannerState}</b>
+Positions: <b>${input.openPositions}</b>
+${statusBalanceLines(input)}
+Loss streak: <b>${input.consecutiveLosses}</b>
+
+Reason:
+${input.pauseReason ? escapeHtml(input.pauseReason) : 'Manual pause'}
+
+Last scan: <b>${lastScan}</b>
+`.trim();
+    }
+    return `
+🟢 <b>BOT ACTIVE</b>
+
+${statusModeLines(input)}
+Scanner: <b>${scannerState}</b>
+Positions: <b>${input.openPositions}</b>
+${statusBalanceLines(input)}
+Loss streak: <b>${input.consecutiveLosses}</b>
+
+🪙 Symbols: <b>${input.symbolsCount}</b>
+⏱ TF: <b>${input.timeframes.map(escapeHtml).join(' / ')}</b>
+
+Last scan: <b>${lastScan}</b>
+`.trim();
+}
+// ─── NEW SIGNAL ───────────────────────────────────────────────────────────────
+function formatSignalMessage(signal) {
+    const reasons = signal.reasons.slice(0, 2).map(cleanReason);
+    return `
+🚨 <b>NEW SIGNAL</b>
+
+${directionStyle(signal.direction)} ${compactSymbol(signal.symbol)}
+
+Entry: <b>${signal.entryPrice}</b>
+SL: <b>${signal.stopLoss}</b>
+
+🎯 TP1: <b>${signal.takeProfit1}</b>
+🎯 TP2: <b>${signal.takeProfit2}</b>
+🎯 TP3: <b>${signal.takeProfit3}</b>
+
+Risk: <b>${signal.riskPercent}%</b>
+R/R: <b>1:${signal.riskReward.toFixed(2)}</b>
+Confidence: <b>${signal.confidence}/10</b>
+Status: <b>${signalStatus(signal.status)}</b>
+${reasons.length > 0 ? `\nSetup:\n${reasons.map(reason => `• ${reason}`).join('\n')}` : ''}
+`.trim();
+}
+// ─── POSITIONS ────────────────────────────────────────────────────────────────
+function formatPositionsMessage(trades) {
+    return trades.map(trade => {
+        const hits = tradeTpHits(trade);
+        const stopMovedToBreakeven = isStopMovedToBreakeven(trade);
+        return `
+${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
+
+Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
+SL: <b>${stopMovedToBreakeven ? 'BE' : formatPrice(trade.symbol, trade.stopLoss)}</b>
+${stopMovedToBreakeven ? '\n🔒 Stop moved to breakeven' : ''}
+
+TP:
+${tpStatus(hits.tp1)} TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>
+${tpStatus(hits.tp2)} TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>
+${tpStatus(hits.tp3)} TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>
+
+TP Progress: <b>${tpProgress(hits)} / 3</b>
+
+Risk: <b>${riskLabel(trade)}</b>
+`.trim();
+    }).join('\n\n');
+}
+function formatSignalsListMessage(signals) {
+    return signals.map(signal => `
+${directionStyle(signal.direction)} ${compactSymbol(signal.symbol)}
+Entry: <b>${signal.entryPrice}</b>
+Confidence: <b>${signal.confidence}/10</b>
+Status: <b>${signalStatus(signal.status)}</b>
+`.trim()).join('\n\n');
+}
+// ─── TP UPDATE ────────────────────────────────────────────────────────────────
+function formatTpUpdateMessage(trade, tpLevel, currentPrice, stopMovedToBreakeven = false) {
+    const pnlPercent = tradePnlPercent(trade, currentPrice);
+    return `
+🎯 <b>TP${tpLevel} HIT</b>
+
+${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
+
+<b>${signed(pnlPercent, 1)}%</b>
+
+Position still active${stopMovedToBreakeven ? '\nSL moved to breakeven' : ''}
+`.trim();
+}
+// ─── TRADE CLOSED ─────────────────────────────────────────────────────────────
+function formatTradeClosedMessage(trade, improvements) {
+    const isWin = trade.result === 'win';
+    const isBreakeven = trade.result === 'breakeven';
+    const icon = isWin ? '✅' : isBreakeven ? '⚖️' : '❌';
+    const reasons = unique([
+        ...(trade.errorTags ?? []).filter(tag => tag !== 'correct_execution').map(tag => tag.replace(/_/g, ' ')),
+        ...(trade.exitReason ?? '').split('\n'),
+    ]).slice(0, 2).map(cleanReason);
+    const aiFix = improvements?.[0] ? cleanReason(improvements[0]) : undefined;
+    return `
+${icon} <b>TRADE CLOSED</b>
+
+${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
+
+PNL: <b>${signed(trade.pnlPercent)}%</b>
+<b>${signed(trade.pnlUsdt)} USDT</b>
+${reasons.length > 0 ? `\nReason:\n${reasons.join('\n')}` : ''}
+${!isWin && !isBreakeven && aiFix ? `\nAI fix:\n${aiFix}` : ''}
+`.trim();
+}
+// ─── Daily Report ─────────────────────────────────────────────────────────────
+function formatDailyReport(date, trades, balance, startBalance, options = {}) {
+    const closed = trades.filter(t => t.status !== 'open');
+    const wins = closed.filter(t => t.result === 'win');
+    const losses = closed.filter(t => t.result === 'loss');
+    const breakevens = closed.filter(t => t.result === 'breakeven');
+    const totalTradePnlPercent = closed.reduce((a, t) => a + (t.pnlPercent ?? 0), 0);
+    const averageTradePercent = closed.length > 0 ? totalTradePnlPercent / closed.length : 0;
+    const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
+    const resultUsdt = balance === null || startBalance === null ? null : balance - startBalance;
+    const equityPercent = startBalance && balance !== null
+        ? ((balance - startBalance) / startBalance) * 100
+        : 0;
+    const accountTitle = options.mode === 'PAPER' ? '💼 <b>PAPER ACCOUNT</b>' : '💼 <b>LIVE ACCOUNT</b>';
+    const okxReferenceLine = options.mode === 'PAPER'
+        ? `
+OKX reference balance:
+<b>${formatDisplayBalance(options.okxBalance ?? null)}</b>`
+        : '';
+    return `
+📋 <b>DAILY DESK REPORT</b>
+
+Date: <b>${escapeHtml(date)}</b>
+
+${accountTitle}
+
+Start:
+<b>${formatDisplayBalance(startBalance)}</b>
+
+Current:
+<b>${formatDisplayBalance(balance)}</b>
+
+Result:
+<b>${resultUsdt === null ? 'unavailable' : `${signed(resultUsdt)} USDT (${signed(equityPercent)}%)`}</b>
+
+━━━━━━━━━━━━━━
+
+Trades:
+<b>${closed.length}</b>
+
+Wins / Losses / BE:
+<b>${wins.length} / ${losses.length} / ${breakevens.length}</b>
+
+Winrate:
+<b>${winRate.toFixed(1)}%</b>
+
+━━━━━━━━━━━━━━
+
+Average trade:
+<b>${signed(averageTradePercent)}%</b>${okxReferenceLine}
+`.trim();
+}
+// ─── Learning Report ──────────────────────────────────────────────────────────
+function formatLearningReport(report) {
+    const learning = report.learning;
+    if (!learning) {
+        const topError = report.frequentErrors[0] ? cleanReason(report.frequentErrors[0]) : 'No recurring error';
+        const topRecommendation = report.recommendations[0] ? cleanReason(report.recommendations[0]) : 'Keep current rules';
+        return `
+🧠 <b>AI LEARNING</b>
+
+Trades: <b>${report.totalTrades}</b>
+Winrate: <b>${report.winRate.toFixed(1)}%</b>
+Profit factor: <b>${report.profitFactor.toFixed(2)}</b>
+
+Main issue:
+${topError}
+
+AI fix:
+${topRecommendation}
+`.trim();
+    }
+    const bestSetupLines = learning.bestSetups.length > 0
+        ? learning.bestSetups.slice(0, 2).map(setup => `${escapeHtml(setup.name)}\nWinrate: <b>${setup.winRate.toFixed(0)}%</b>`).join('\n\n')
+        : 'not enough data';
+    const worstSetupLines = learning.worstSetups.length > 0
+        ? learning.worstSetups.slice(0, 2).map(setup => `${escapeHtml(setup.name)}\nWinrate: <b>${setup.winRate.toFixed(0)}%</b>`).join('\n\n')
+        : 'not enough data';
+    const bestPhaseLines = learning.bestMarketPhases.length > 0
+        ? learning.bestMarketPhases.slice(0, 2).map(phase => `${escapeHtml(phase.phase)} — <b>${phase.winRate.toFixed(0)}%</b>`).join('\n')
+        : 'not enough data';
+    const worstPhaseLines = learning.worstMarketPhases.length > 0
+        ? learning.worstMarketPhases.slice(0, 2).map(phase => `${escapeHtml(phase.phase)} — <b>${phase.winRate.toFixed(0)}%</b>`).join('\n')
+        : 'not enough data';
+    const errors = learning.commonErrors.length > 0
+        ? learning.commonErrors.slice(0, 3).map((error, idx) => `${idx + 1}. ${escapeHtml(error.name)} (${error.count})`).join('\n')
+        : 'not enough data';
+    const recommendations = learning.recommendations.items.slice(0, 6).map(item => `• ${cleanReason(item)}`).join('\n');
+    const quality = learning.quality;
+    return `
+🧠 <b>LEARNING ENGINE</b>
+
+Closed trades: <b>${learning.closedTrades}</b>
+WIN: <b>${learning.wins}</b>
+LOSS: <b>${learning.losses}</b>
+Winrate: <b>${learning.winRate.toFixed(1)}%</b>
+
+🎯 <b>TP Statistics</b>
+TP1 reached: <b>${learning.tpStats.tp1ReachPercent.toFixed(0)}%</b>
+TP2 reached: <b>${learning.tpStats.tp2ReachPercent.toFixed(0)}%</b>
+TP3 reached: <b>${learning.tpStats.tp3ReachPercent.toFixed(0)}%</b>
+
+🏆 <b>Best Setups</b>
+${bestSetupLines}
+
+💀 <b>Worst Setups</b>
+${worstSetupLines}
+
+📈 <b>Best Market Phase</b>
+${bestPhaseLines}
+
+📉 <b>Worst Market Phase</b>
+${worstPhaseLines}
+
+⚠ <b>Most Common Errors</b>
+${errors}
+
+📊 <b>TRADE QUALITY</b>
+Average confidence: <b>${formatOptional(quality.averageConfidence, 1)} / 10</b>
+Winning confidence: <b>${formatOptional(quality.winningConfidence, 1)} / 10</b>
+Losing confidence: <b>${formatOptional(quality.losingConfidence, 1)} / 10</b>
+Average holding time: <b>${formatDuration(quality.averageHoldingMinutes)}</b>
+Average drawdown: <b>${formatOptional(quality.averageDrawdownPercent, 1)}%</b>
+Average max profit before exit: <b>${formatOptional(quality.averageMaxProfitPercent, 1)}%</b>
+${learning.missingFields.length > 0 ? `\nMissing data:\n${learning.missingFields.map(escapeHtml).join(', ')}` : ''}
+
+🧠 <b>Recommendations</b>
+${recommendations}
+
+🤖 <b>Self Learning</b>
+Status: <b>${learning.selfLearning.status}</b>
+Reason: <b>${escapeHtml(learning.selfLearning.reason)}</b>
+Collected trades: <b>${learning.selfLearning.collectedTrades}</b>
+Required: <b>${learning.selfLearning.requiredTrades}</b>
+`.trim();
+}
+function formatLearningDashboard(dashboard) {
+    return `
+🧠 <b>AI Learning Engine</b>
+
+Closed trades: <b>${dashboard.closedTrades}</b>
+Winrate: <b>${dashboard.winRate.toFixed(1)}%</b>
+
+Best setup:
+<b>${escapeHtml(dashboard.bestSetup)}</b>
+
+Worst setup:
+<b>${escapeHtml(dashboard.worstSetup)}</b>
+
+TP reach:
+TP1: <b>${dashboard.tp1ReachPercent.toFixed(0)}%</b>
+TP2: <b>${dashboard.tp2ReachPercent.toFixed(0)}%</b>
+TP3: <b>${dashboard.tp3ReachPercent.toFixed(0)}%</b>
+
+Top error:
+<b>${escapeHtml(dashboard.topError)}</b>
+
+Self-learning:
+❌ <b>OFF</b>
+
+Collected trades:
+<b>${dashboard.selfLearning.collectedTrades} / ${dashboard.selfLearning.requiredTrades}</b>
+`.trim();
+}
+function formatOptional(value, digits) {
+    return value === null ? 'not enough data' : value.toFixed(digits);
+}
+function formatDuration(minutes) {
+    if (minutes === null)
+        return 'not enough data';
+    const rounded = Math.round(minutes);
+    const hours = Math.floor(rounded / 60);
+    const mins = rounded % 60;
+    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+}
+function formatLearningInProgressMessage(completedTrades, requiredTrades = 10) {
+    return `
+🧠 <b>AI learning in progress</b>
+
+Completed trades:
+<b>${completedTrades} / ${requiredTrades}</b>
+`.trim();
+}
+// ─── HEARTBEAT ────────────────────────────────────────────────────────────────
+function formatHeartbeatMessage(input) {
+    return `
+🟢 <b>Scanner active</b>
+
+Checked: <b>${input.checkedSymbols}</b> symbols
+Signals found: <b>${input.signalsFound}</b>
+Open positions: <b>${input.openPositions}</b>
+Last scan: <b>${input.lastScan ?? '—'}</b>
+`.trim();
+}
+// ─── Error Alert ──────────────────────────────────────────────────────────────
+function formatErrorAlert(error, context) {
+    return `
+⚠️ <b>Bot alert</b>
+
+${context ? `Context: <code>${escapeHtml(context)}</code>\n` : ''}Error: <code>${escapeHtml(error)}</code>
+`.trim();
+}
+//# sourceMappingURL=messages.js.map

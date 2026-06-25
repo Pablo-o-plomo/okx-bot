@@ -11,7 +11,7 @@ const TF_MAP: Record<string, string> = {
 
 /**
  * Fetch OHLCV candles from OKX.
- * Returns candles sorted oldest → newest.
+ * Returns candles sorted oldest newest.
  */
 export async function getCandles(
   symbol: string,
@@ -37,7 +37,7 @@ export async function getCandles(
       volume: parseFloat(c[5]),
     }));
 
-    // OKX returns newest first — reverse to oldest first
+    // OKX returns newest first - reverse to oldest first
     return candles.reverse();
   } catch (err: any) {
     logger.error(`Failed to fetch candles for ${symbol} ${timeframe}: ${err.message}`);
@@ -65,7 +65,7 @@ export async function getInstrumentInfo(symbol: string): Promise<{
   tickSz: number;
   lotSz: number;
   minSz: number;
-  ctVal: number; // contract value (for swaps)
+  ctVal: number;
   instType: string;
 } | null> {
   try {
@@ -86,6 +86,32 @@ export async function getInstrumentInfo(symbol: string): Promise<{
   } catch (err: any) {
     logger.error(`Failed to fetch instrument info for ${symbol}: ${err.message}`);
     return null;
+  }
+}
+
+// Sizing parameters needed for position and partial-close calculations.
+export interface InstrumentTradeParams {
+  ctVal: number;
+  lotSz: number;
+  minSz: number;
+}
+
+// Returns ctVal, lotSz, minSz for a symbol.
+// Falls back to safe defaults if OKX is unreachable.
+export async function getInstrumentTradeParams(
+  symbol: string,
+): Promise<InstrumentTradeParams> {
+  const FALLBACK: InstrumentTradeParams = { ctVal: 1, lotSz: 1, minSz: 1 };
+  try {
+    const info = await getInstrumentInfo(symbol);
+    if (!info) {
+      logger.warn('getInstrumentTradeParams: no data for ' + symbol + ', using fallback');
+      return FALLBACK;
+    }
+    return { ctVal: info.ctVal, lotSz: info.lotSz, minSz: info.minSz };
+  } catch (err: any) {
+    logger.warn('getInstrumentTradeParams: error for ' + symbol + ': ' + err.message);
+    return FALLBACK;
   }
 }
 

@@ -82,6 +82,12 @@ export interface Trade {
   openedAt?: string;
   closedAt?: string;
   slAlgoId?: string;   // OKX algo order ID for the active SL conditional order
+  // Partial close tracking (populated after TP1/TP2 partial closes)
+  remainingSize?: number;   // current open contracts; undefined → use positionSize
+  tp1ClosedSize?: number;   // contracts closed at TP1
+  tp1PnlUsdt?: number;      // realized USDT PnL from TP1 partial close
+  tp2ClosedSize?: number;   // contracts closed at TP2
+  tp2PnlUsdt?: number;      // realized USDT PnL from TP2 partial close
 }
 
 // ─── Indicator Snapshot ───────────────────────────────────────────────────────
@@ -205,7 +211,8 @@ export interface AutoOptimizeRecommendations {
   profile: LearningProfile;
 }
 
-// ─── Bot State ────────────────────────────────────────────────────────────────
+
+// ─── Bot State ───────────────────────────────────────────────────────────
 export interface BotState {
   isPaused: boolean;
   pausedUntil?: string;
