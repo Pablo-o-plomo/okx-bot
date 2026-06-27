@@ -37,7 +37,7 @@ async function checkTrade(trade: Trade): Promise<void> {
   if (!tpHitMap.has(id)) tpHitMap.set(id, new Set());
   const hitTPs = tpHitMap.get(id)!;
   if (trade.tp1Hit) hitTPs.add(1);
-  if (trade.tp2Hit || trade.stopLoss === trade.entryPrice) hitTPs.add(2);
+  if (trade.tp2Hit) hitTPs.add(2);
   if (trade.tp3Hit) hitTPs.add(3);
 
   const isLong = trade.direction === 'LONG';
