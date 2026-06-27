@@ -76,12 +76,9 @@ function formatBalance(balance: number | null): string {
 
 const MAIN_MENU_KEYBOARD: TelegramBot.ReplyKeyboardMarkup = {
   keyboard: [
-    [{ text: '📊 Статус' }, { text: '⏸ Пауза' }],
-    [{ text: '▶️ Возобновить' }, { text: '📦 Позиции' }],
-    [{ text: '📈 Сигналы' }, { text: '📋 Отчет' }],
-    [{ text: '⚙️ Риск' }, { text: '🛡️ Риск-менеджмент' }],
-    [{ text: '⏸ Автопауза' }, { text: '⚙️ Настройки риска' }],
-    [{ text: '🧠 Анализ' }, { text: '🧠 Learning' }],
+    [{ text: '📊 Статус' }, { text: '📈 Позиции' }],
+    [{ text: '💼 Paper счёт' }, { text: '📋 Отчёт дня' }],
+    [{ text: '🧠 Learning' }, { text: '⚙️ Настройки' }],
   ],
   resize_keyboard: true,
   is_persistent: true,
@@ -226,6 +223,27 @@ function registerCommands(): void {
   bot.onText(/^🧠 Learning$/, async (msg) => {
     if (!isAdmin(msg.chat.id.toString())) return;
     await sendLearning(msg.chat.id.toString());
+  });
+
+  // New menu buttons
+  bot.onText(/^📈 Позиции$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendPositions(msg.chat.id.toString());
+  });
+
+  bot.onText(/^💼 Paper счёт$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendPaperAccount(msg.chat.id.toString());
+  });
+
+  bot.onText(/^📋 Отчёт дня$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendReport(msg.chat.id.toString());
+  });
+
+  bot.onText(/^⚙️ Настройки$/, async (msg) => {
+    if (!isAdmin(msg.chat.id.toString())) return;
+    await sendSettings(msg.chat.id.toString());
   });
 
   // Handle polling errors gracefully
@@ -475,6 +493,73 @@ async function sendLearning(chatId: string): Promise<void> {
   }
 }
 
+async function sendPaperAccount(chatId: string): Promise<void> {
+  const state = getBotState();
+  const balanceView = await getBalanceView();
+
+  const startBalance = state.paperStartBalance ?? config.trading.paperStartBalance;
+  const currentBalance = balanceView.tradingBalance;
+  const resultUsdt = currentBalance - startBalance;
+  const resultPct = startBalance > 0 ? (resultUsdt / startBalance) * 100 : 0;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const allTrades = getLastNTrades(500);
+  const todayTrades = allTrades.filter(
+    t => t.status !== 'open' && (t.closedAt ?? '').startsWith(today),
+  );
+  const todayWins = todayTrades.filter(t => t.result === 'win');
+  const todayLosses = todayTrades.filter(t => t.result === 'loss');
+  const todayBE = todayTrades.filter(t => t.result === 'breakeven');
+  const todayPnlPct = todayTrades.reduce((a, t) => a + (t.pnlPercent ?? 0), 0);
+
+  const sgn = (v: number): string => (v >= 0 ? '+' : '') + v.toFixed(2);
+
+  await send(
+    chatId,
+    [
+      '💼 <b>PAPER ACCOUNT</b>',
+      '',
+      `Start: <b>${startBalance.toFixed(2)} USDT</b>`,
+      `Current: <b>${currentBalance.toFixed(2)} USDT</b>`,
+      '',
+      'Result:',
+      `<b>${sgn(resultUsdt)} USDT</b>`,
+      `<b>${sgn(resultPct)}%</b>`,
+      '',
+      'Today:',
+      `<b>${sgn(todayPnlPct)}%</b>`,
+      '',
+      'Trades today:',
+      `<b>${todayTrades.length}</b>`,
+      'Wins / Losses / BE:',
+      `<b>${todayWins.length} / ${todayLosses.length} / ${todayBE.length}</b>`,
+    ].join('\n'),
+    true,
+  );
+}
+
+async function sendSettings(chatId: string): Promise<void> {
+  const settings = getRiskGuardSettings();
+  const symbols = config.trading.symbols
+    .map(s => s.replace(/-USDT-SWAP$/, '').replace(/-USDT$/, ''))
+    .join(', ');
+
+  await send(
+    chatId,
+    [
+      '⚙️ <b>SETTINGS</b>',
+      '',
+      `Mode: <b>${config.trading.isLive ? 'LIVE' : 'PAPER'}</b>`,
+      `Risk per trade: <b>${settings.riskPerTrade}%</b>`,
+      `Max daily loss: <b>${settings.maxDailyLoss}%</b>`,
+      `Max positions: <b>${config.trading.maxOpenPositions}</b>`,
+      `Auto-pause: <b>${settings.autoPauseOnLimit ? 'ON' : 'OFF'}</b>`,
+      `Symbols: <b>${symbols}</b>`,
+    ].join('\n'),
+    true,
+  );
+}
+
 // ─── Outbound helpers ─────────────────────────────────────────────────────────
 
 async function send(chatId: string, text: string, withMenu = false): Promise<void> {
@@ -500,8 +585,8 @@ export async function broadcastTradeClosed(trade: Trade, improvements?: string[]
   await send(config.telegram.chatId, formatTradeClosedMessage(trade, improvements));
 }
 
-export async function broadcastTpHit(trade: Trade, level: number, price: number, stopMovedToBreakeven = false): Promise<void> {
-  const text = formatTpUpdateMessage(trade, level, price, stopMovedToBreakeven);
+export async function broadcastTpHit(trade: Trade, level: number, price: number, slNote?: 'breakeven' | 'TP1'): Promise<void> {
+  const text = formatTpUpdateMessage(trade, level, price, slNote);
   await send(config.telegram.chatId, text);
 }
 

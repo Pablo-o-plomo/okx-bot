@@ -205,26 +205,57 @@ ${reasons.length > 0 ? `\nSetup:\n${reasons.map(reason => `• ${reason}`).join(
 
 // ─── POSITIONS ────────────────────────────────────────────────────────────────
 export function formatPositionsMessage(trades: Trade[]): string {
-  return trades.map(trade => {
-    const hits = tradeTpHits(trade);
-    const stopMovedToBreakeven = isStopMovedToBreakeven(trade);
-    return `
-${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
+  if (trades.length === 0) return '📈 <b>No open positions</b>';
 
-Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>
-SL: <b>${stopMovedToBreakeven ? 'BE' : formatPrice(trade.symbol, trade.stopLoss)}</b>
-${stopMovedToBreakeven ? '\n🔒 Stop moved to breakeven' : ''}
+  return trades
+    .map(trade => {
+      const hits = tradeTpHits(trade);
 
-TP:
-${tpStatus(hits.tp1)} TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>
-${tpStatus(hits.tp2)} TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>
-${tpStatus(hits.tp3)} TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>
+      // SL label: BE if sl == entry, TP1 if sl == takeProfit1
+      let slLabel: string;
+      if (trade.stopLoss === trade.entryPrice) {
+        slLabel = `${formatPrice(trade.symbol, trade.stopLoss)} <b>BE</b>`;
+      } else if (trade.takeProfit1 && trade.stopLoss === trade.takeProfit1) {
+        slLabel = `${formatPrice(trade.symbol, trade.stopLoss)} <b>TP1</b>`;
+      } else {
+        slLabel = `<b>${formatPrice(trade.symbol, trade.stopLoss)}</b>`;
+      }
 
-TP Progress: <b>${tpProgress(hits)} / 3</b>
+      // Fixed PnL from partial closes
+      const fixedPnl = (trade.tp1PnlUsdt ?? 0) + (trade.tp2PnlUsdt ?? 0);
+      const hasFixed = fixedPnl !== 0;
 
-Risk: <b>${riskLabel(trade)}</b>
-`.trim();
-  }).join('\n\n');
+      // Remaining position %
+      const remainingSize = trade.remainingSize ?? trade.positionSize;
+      const remainingPct = Math.round((remainingSize / trade.positionSize) * 100);
+      const hasPartial = !!(trade.tp1ClosedSize || trade.tp2ClosedSize);
+
+      const parts: string[] = [
+        `${directionTag(trade.direction)} ${compactSymbol(trade.symbol)}`,
+        '',
+        `Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>`,
+        `SL: ${slLabel}`,
+        '',
+        `${tpStatus(hits.tp1)} TP1: <b>${formatPrice(trade.symbol, trade.takeProfit1)}</b>`,
+        `${tpStatus(hits.tp2)} TP2: <b>${formatPrice(trade.symbol, trade.takeProfit2)}</b>`,
+        `${tpStatus(hits.tp3)} TP3: <b>${formatPrice(trade.symbol, trade.takeProfit3)}</b>`,
+      ];
+
+      if (hasFixed) {
+        parts.push('');
+        parts.push('Fixed PnL:');
+        parts.push(`<b>${signed(fixedPnl)} USDT</b>`);
+      }
+
+      if (hasPartial) {
+        parts.push('');
+        parts.push('Remaining:');
+        parts.push(`<b>${remainingPct}%</b>`);
+      }
+
+      return parts.join('\n');
+    })
+    .join('\n\n─────────────────\n\n');
 }
 
 export function formatSignalsListMessage(signals: Signal[]): string {
@@ -237,18 +268,69 @@ Status: <b>${signalStatus(signal.status)}</b>
 }
 
 // ─── TP UPDATE ────────────────────────────────────────────────────────────────
-export function formatTpUpdateMessage(trade: Trade, tpLevel: number, currentPrice: number, stopMovedToBreakeven = false): string {
-  const pnlPercent = tradePnlPercent(trade, currentPrice);
+function directionTag(direction: Direction): string {
+  return direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+}
 
-  return `
-🎯 <b>TP${tpLevel} HIT</b>
+function formatPct(value: number): string {
+  return Math.round(value) + '%';
+}
 
-${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
+export function formatTpUpdateMessage(
+  trade: Trade,
+  tpLevel: number,
+  currentPrice: number,
+  slNote?: 'breakeven' | 'TP1',
+): string {
+  const tpPrice = tpLevel === 1 ? trade.takeProfit1 : trade.takeProfit2;
+  const partialPnl = tpLevel === 1 ? (trade.tp1PnlUsdt ?? null) : (trade.tp2PnlUsdt ?? null);
+  const closedSize = tpLevel === 1 ? (trade.tp1ClosedSize ?? null) : (trade.tp2ClosedSize ?? null);
+  const remainingSize = trade.remainingSize ?? trade.positionSize;
 
-<b>${signed(pnlPercent, 1)}%</b>
+  const fixedPct = closedSize !== null
+    ? formatPct((closedSize / trade.positionSize) * 100)
+    : '33%';
+  const remainingPct = formatPct((remainingSize / trade.positionSize) * 100);
 
-Position still active${stopMovedToBreakeven ? '\nSL moved to breakeven' : ''}
-`.trim();
+  const pnlLine = partialPnl !== null
+    ? `PnL: <b>${signed(partialPnl)} USDT</b>`
+    : '';
+
+  const slLine = slNote === 'TP1'
+    ? 'SL: <b>TP1</b>'
+    : slNote === 'breakeven'
+    ? 'SL: <b>Breakeven</b>'
+    : '';
+
+  const parts = [
+    `🎯 <b>TP${tpLevel} HIT</b>`,
+    '',
+    `${directionTag(trade.direction)} ${compactSymbol(trade.symbol)}`,
+    '',
+    `Entry: <b>${formatPrice(trade.symbol, trade.entryPrice)}</b>`,
+    `TP${tpLevel}: <b>${formatPrice(trade.symbol, tpPrice)}</b>`,
+    '',
+    `Fixed: <b>${fixedPct}</b>`,
+    pnlLine,
+    '',
+    slLine,
+    `Remaining: <b>${remainingPct}</b>`,
+  ].filter(line => line !== null && (line !== '' || true));
+
+  // collapse consecutive blank lines
+  const result: string[] = [];
+  let prevBlank = false;
+  for (const line of parts) {
+    if (line === '') {
+      if (!prevBlank) result.push(line);
+      prevBlank = true;
+    } else {
+      result.push(line);
+      prevBlank = false;
+    }
+  }
+
+  return result.join('\n').trim();
 }
 
 // ─── TRADE CLOSED ─────────────────────────────────────────────────────────────
@@ -262,16 +344,53 @@ export function formatTradeClosedMessage(trade: Trade, improvements?: string[]):
   ]).slice(0, 2).map(cleanReason);
   const aiFix = improvements?.[0] ? cleanReason(improvements[0]) : undefined;
 
-  return `
-${icon} <b>TRADE CLOSED</b>
+  const tp1Pnl = trade.tp1PnlUsdt ?? 0;
+  const tp2Pnl = trade.tp2PnlUsdt ?? 0;
+  const hasPartialClose = tp1Pnl !== 0 || tp2Pnl !== 0;
+  const totalPnlUsdt = trade.pnlUsdt ?? 0;
 
-${directionStyle(trade.direction)} ${compactSymbol(trade.symbol)}
+  // reason for close
+  let closeReason = '';
+  if (isBreakeven) {
+    closeReason = tp1Pnl !== 0 ? 'Breakeven after TP1' : 'Breakeven';
+  } else if (!isWin) {
+    closeReason = 'Stop Loss';
+  } else if (trade.status === 'closed_tp3') {
+    closeReason = 'TP3';
+  } else if (trade.status === 'closed_tp2') {
+    closeReason = 'TP2';
+  } else if (trade.status === 'closed_tp1') {
+    closeReason = 'TP1';
+  }
 
-PNL: <b>${signed(trade.pnlPercent)}%</b>
-<b>${signed(trade.pnlUsdt)} USDT</b>
-${reasons.length > 0 ? `\nReason:\n${reasons.join('\n')}` : ''}
-${!isWin && !isBreakeven && aiFix ? `\nAI fix:\n${aiFix}` : ''}
-`.trim();
+  let body = `${icon} <b>TRADE CLOSED</b>
+
+${directionTag(trade.direction)} ${compactSymbol(trade.symbol)}
+
+Reason: <b>${closeReason || (reasons[0] ?? '—')}</b>
+
+`;
+
+  if (hasPartialClose) {
+    // Show total + breakdown
+    body += `Total PnL:
+<b>${signed(totalPnlUsdt)} USDT</b>
+
+Breakdown:`;
+    if (tp1Pnl !== 0) body += `\nTP1: <b>${signed(tp1Pnl)} USDT</b>`;
+    if (tp2Pnl !== 0) body += `\nTP2: <b>${signed(tp2Pnl)} USDT</b>`;
+    const finalPnl = totalPnlUsdt - tp1Pnl - tp2Pnl;
+    body += `\nFinal: <b>${signed(finalPnl)} USDT</b>`;
+  } else {
+    // Simple close — show PnL%  + USDT
+    body += `PnL:
+<b>${signed(trade.pnlPercent)}% / ${signed(totalPnlUsdt)} USDT</b>`;
+    if (!isWin && !isBreakeven && aiFix) {
+      body += `\n\nAI fix:\n${aiFix}`;
+    }
+  }
+
+  return body.trim();
 }
 
 // ─── Daily Report ─────────────────────────────────────────────────────────────

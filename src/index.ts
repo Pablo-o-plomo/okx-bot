@@ -97,10 +97,8 @@ function setupSchedulers(): void {
     }
   });
 
-  // Premium feed heartbeat — every 30 minutes
-  cron.schedule('*/30 * * * *', async () => {
-    await broadcastScannerHeartbeat();
-  });
+  // Scanner heartbeat cron removed — broadcaster kept for manual /status button.
+  // broadcastScannerHeartbeat() is still available and called on user request.
 
   logger.info('⏰ Schedulers started');
 }

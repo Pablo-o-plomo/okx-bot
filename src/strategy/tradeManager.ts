@@ -68,7 +68,7 @@ async function checkTrade(trade: Trade): Promise<void> {
     return;
   }
 
-  if (tp2Hit && !hitTPs.has(2)) {
+  if (tp2Hit && !hitTPs.has(2) && !trade.tp2ClosedSize) {
     hitTPs.add(2);
     updateTradeTpHit(id, 1);
     updateTradeTpHit(id, 2);
@@ -76,7 +76,7 @@ async function checkTrade(trade: Trade): Promise<void> {
     trade.tp2Hit = true;
     await handlePartialClose(trade, 2, currentPrice);
     await moveStopToLevel(trade, trade.takeProfit1);
-    await broadcastTpHit(trade, 2, currentPrice, true);
+    await broadcastTpHit(trade, 2, currentPrice, 'TP1');
     logger.info(`[TP2] ${trade.symbol} partial close + SL moved to TP1`);
     return;
   }
@@ -88,7 +88,7 @@ async function checkTrade(trade: Trade): Promise<void> {
     trade.tp1Hit = true;
     await handlePartialClose(trade, 1, currentPrice);
     await moveStopToBreakeven(trade);
-    await broadcastTpHit(trade, 1, currentPrice, true);
+    await broadcastTpHit(trade, 1, currentPrice, 'breakeven');
     logger.info(`[TP1] ${trade.symbol} partial close + SL moved to breakeven`);
   }
 }
